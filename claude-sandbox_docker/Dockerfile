@@ -2,12 +2,19 @@ FROM eclipse-temurin:17-jdk AS temurin
 
 FROM node:22-slim
 
+################################################################################
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       git ca-certificates curl ripgrep vim sudo \
       python3 python3-pip python3-venv \
-      build-essential && \
-    rm -rf /var/lib/apt/lists/*
+      build-essential
+
+# For email notifications:
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils
+
+# Clean up APT stuff:
+RUN rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @anthropic-ai/claude-code
 
@@ -34,6 +41,17 @@ RUN python3 -m venv /opt/claude-venv && \
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH=/opt/claude-venv/bin:/usr/local/cargo/bin:/opt/java/openjdk/bin:$PATH
 
+################################################################################
+
 USER claude
+
+# Setup Mail for claude user:
+COPY --chown=claude:claude msmtprc /home/claude/.msmtprc
+RUN chmod 600 /home/claude/.msmtprc
+
+COPY --chown=claude:claude start_script.sh /home/claude/start_script.sh 
+RUN chmod +x /home/claude/start_script.sh
+
 WORKDIR /workspace
-CMD ["claude"]
+CMD ["/home/claude/start_script.sh"]
+

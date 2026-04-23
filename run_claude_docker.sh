@@ -5,6 +5,7 @@ set -euo pipefail
 # a proper sandbox.  It's VERY important that we don't let these agents run
 # freely around our machine.
 PROJECTS_DIR=/juffowup2/claude_projects/workspace
+PROJECTS_DIR=/juffowup2/claude_projects/workspace/gCNV_Calling
 PERSISTENT_STATE_DIR=/juffowup2/claude_projects/claude-sandbox-persistent-state
 SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
 
