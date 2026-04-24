@@ -53,6 +53,9 @@ USER claude
 COPY --chown=claude:claude msmtprc /home/claude/.msmtprc
 RUN chmod 600 /home/claude/.msmtprc
 
+COPY --chown=claude:claude start_dockerd.sh /home/claude/start_dockerd.sh
+RUN chmod +x /home/claude/start_dockerd.sh
+
 COPY --chown=claude:claude start_script.sh /home/claude/start_script.sh 
 RUN chmod +x /home/claude/start_script.sh
 
