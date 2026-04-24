@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 
-THRESHOLD=120
+################################################################################
+exec >> ~/claude-hook-debug.log 2>&1
+set -x
+################################################################################
+
+#THRESHOLD=120
+THRESHOLD=0
 TIMESTAMP_FILE="/tmp/.claude_task_start_$(basename $PWD)"
-# NOTE: 172.17.0.1 is the default
-#       Port 25 is SMTP
 HOST_IP=172.17.0.1
 SMTP_PORT=25
 
@@ -11,52 +15,63 @@ CLAUDE_FROM_ADDRESS="claude-sandbox"
 REAL_HOST_NAME="dsde-methods-jonn-juffowup"
 YOUR_EMAIL="jonn@broadinstitute.org"
 
-PAYLOAD=$(cat)
+################################################################################
 
 if [ ! -f "$TIMESTAMP_FILE" ]; then
-  date +%s > "$TIMESTAMP_FILE"
+  echo "No timestamp file found, skipping"
   exit 0
 fi
+
+################################################################################
 
 START=$(cat "$TIMESTAMP_FILE")
 NOW=$(date +%s)
 ELAPSED=$((NOW - START))
 rm -f "$TIMESTAMP_FILE"
 
+PROMPT_FILE="/tmp/.claude_task_prompt_$(basename $PWD)"
+PROMPT=$(cat "$PROMPT_FILE" 2>/dev/null || echo "(prompt unavailable)")
+rm -f "$PROMPT_FILE"
+
+PAYLOAD=$(cat)
+
 if [ "$ELAPSED" -ge "$THRESHOLD" ]; then
-  TRANSCRIPT=$(echo "$PAYLOAD" | python3 -c "
+
+  LAST_MESSAGE=$(echo "$PAYLOAD" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-messages = data.get('transcript', [])
-output = []
-for msg in messages:
-    role = msg.get('role', '')
-    content = msg.get('content', '')
-    if isinstance(content, list):
-        text = ' '.join(b.get('text','') for b in content if b.get('type') == 'text')
-    else:
-        text = str(content)
-    if text.strip():
-        output.append(f'{role.upper()}: {text[:500]}')
-print('\n\n'.join(output))
+print(data.get('last_assistant_message', ''))
 ")
 
-  SUBJECT_SUMMARY=$(echo "$TRANSCRIPT" | claude -p "Summarize this task in 5 words or fewer, \
-no punctuation, no unicode, plain ASCII only. \
-Examples: 'refactored auth module', 'fixed login bug', 'added unit tests'. \
-Reply with only the summary, nothing else.")
+  TRANSCRIPT_PATH=$(echo "$PAYLOAD" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+print(data.get('transcript_path', ''))
+")
 
-  SUMMARY=$(echo "$TRANSCRIPT" | claude -p "You are summarizing a completed Claude Code task for a notification email. \
-In 3-5 sentences, describe: what the user asked for, what was accomplished, \
-and any important outcomes or files changed. Be specific and concrete. \
-Do not start with 'The user' — write naturally as if briefing someone.")
+  BODY=$(python3 -c "
+import json, sys
+path = '$TRANSCRIPT_PATH'
+try:
+    with open(path) as f:
+        lines = []
+        for line in f:
+            msg = json.loads(line)
+            content = msg.get('content', '')
+            if msg.get('role') == 'assistant':
+                if isinstance(content, list):
+                    text = ' '.join(b.get('text','') for b in content if b.get('type') == 'text')
+                else:
+                    text = str(content)
+                if text.strip():
+                    lines.extend(text.strip().splitlines())
+    print('\n'.join(lines[-20:]))
+except Exception as e:
+    print(f'(could not read transcript: {e})')
+")
 
+  SUBJECT_SUMMARY=$(echo "$LAST_MESSAGE" | head -1 | cut -c1-60)
   SUBJECT="[Claude] Task Done: ${SUBJECT_SUMMARY} - pwd:$(basename $PWD) (${ELAPSED}s)"
-  BODY="Project: $(basename $PWD)
-Duration: ${ELAPSED}s
-
-${SUMMARY}"
-
 
 curl smtp://${HOST_IP}:${SMTP_PORT} \
   --insecure \
@@ -69,8 +84,15 @@ Subject: ${SUBJECT}
 From: ${CLAUDE_FROM_ADDRESS}@${REAL_HOST_NAME}
 To: ${YOUR_EMAIL}
 
+Project: $(basename $PWD)
+Duration: ${ELAPSED}s
+Prompt: ${PROMPT}
+
+--- Last 20 lines of output ---
 ${BODY}
+
+${LAST_MESSAGE}
+
 EOF
 
 fi
-
