@@ -3,8 +3,8 @@
 exec >> ~/claude-hook-debug.log 2>&1
 set -x
 
-TIMESTAMP_FILE="/tmp/.claude_task_start_$(basename $PWD)"
-PROMPT_FILE="/tmp/.claude_task_prompt_$(basename $PWD)"
+TIMESTAMP_FILE="~/claude_task_start_$(basename $PWD)"
+PROMPT_FILE="~/claude_task_prompt_$(basename $PWD)"
 
 PAYLOAD=$(cat)
 

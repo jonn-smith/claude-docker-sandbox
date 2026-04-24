@@ -6,7 +6,8 @@ set -x
 ################################################################################
 
 THRESHOLD=120
-TIMESTAMP_FILE="/tmp/.claude_task_start_$(basename $PWD)"
+TIMESTAMP_FILE="~/claude_task_start_$(basename $PWD)"
+PROMPT_FILE="~/claude_task_prompt_$(basename $PWD)"
 HOST_IP=172.17.0.1
 SMTP_PORT=25
 
@@ -28,7 +29,6 @@ NOW=$(date +%s)
 ELAPSED=$((NOW - START))
 rm -f "$TIMESTAMP_FILE"
 
-PROMPT_FILE="/tmp/.claude_task_prompt_$(basename $PWD)"
 PROMPT=$(cat "$PROMPT_FILE" 2>/dev/null || echo "(prompt unavailable)")
 rm -f "$PROMPT_FILE"
 
