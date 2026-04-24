@@ -5,8 +5,7 @@ exec >> ~/claude-hook-debug.log 2>&1
 set -x
 ################################################################################
 
-#THRESHOLD=120
-THRESHOLD=0
+THRESHOLD=120
 TIMESTAMP_FILE="/tmp/.claude_task_start_$(basename $PWD)"
 HOST_IP=172.17.0.1
 SMTP_PORT=25
