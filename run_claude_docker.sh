@@ -12,6 +12,32 @@ SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
 # Set up settings if they don't exist:
 mkdir -p "$SANDBOX_HOME/.claude"
 [ -s "$SANDBOX_HOME/.claude.json" ] || echo '{}' > "$SANDBOX_HOME/.claude.json"
+if [ ! -f "${SANDBOX_HOME}.claude/settings.json" ] ; then
+  echo '{' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '  "hooks": {' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '    "UserPromptSubmit": [' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '      {' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '        "hooks": [' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '          {' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '            "type": "command",' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '            "command": "~/.claude/hooks/record-task-start.sh"' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '          }' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '        ]' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '      }' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '    ],' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '    "Stop": [' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '      {' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '        "hooks": [' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '          {' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '            "type": "command",' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '            "command": "~/.claude/hooks/notify-if-long.sh"' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '          }' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '        ]' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '      }' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '    ]' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '  }' >> "${SANDBOX_HOME}.claude/settings.json"
+  echo '}' >> "${SANDBOX_HOME}.claude/settings.json"
+fi
 
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
