@@ -13,9 +13,13 @@ RUN apt-get update && \
 # For email notifications:
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils
 
+# Other requirements:
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y shellcheck docker.io
+
 # Clean up APT stuff:
 RUN rm -rf /var/lib/apt/lists/*
 
+# Install claude code:                                
 RUN npm install -g @anthropic-ai/claude-code
 
 COPY --from=temurin /opt/java/openjdk /opt/java/openjdk

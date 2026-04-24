@@ -47,6 +47,8 @@ exec docker run --rm -it \
   -v "${SANDBOX_HOME}/.claude:/home/claude/.claude" \
   -v "${SANDBOX_HOME}/.claude.json:/home/claude/.claude.json" \
   -v "${HOME}/.claude/.credentials.json:/home/claude/.claude/.credentials.json" \
+  --runtime=sysbox-runc \
+  -v claude-dind-lib:/var/lib/docker \
   -w /workspace \
   claude-sandbox:latest claude "$@"
 
