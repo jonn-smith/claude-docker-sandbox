@@ -10,11 +10,8 @@ RUN apt-get update && \
       python3 python3-pip python3-venv \
       build-essential
 
-# For email notifications:
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils
-
-# Other requirements:
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y shellcheck docker.io
+# For email notifications, docker-in-a-docker and other utils:
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils shellcheck docker.io procps 
 
 # Clean up APT stuff:
 RUN rm -rf /var/lib/apt/lists/*

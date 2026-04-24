@@ -6,5 +6,6 @@ service postfix start
 # Start the docker service so we can run docker in a docker for tests:
 ~/start_dockerd.sh
 
-claude
+# Run claude:
+claude "$@"
 

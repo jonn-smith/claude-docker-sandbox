@@ -50,5 +50,6 @@ exec docker run --rm -it \
   --runtime=sysbox-runc \
   -v claude-dind-lib:/var/lib/docker \
   -w /workspace \
-  claude-sandbox:latest claude "$@"
+  --entrypoint /home/claude/start_script.sh \
+  claude-sandbox:latest "$@"
 
