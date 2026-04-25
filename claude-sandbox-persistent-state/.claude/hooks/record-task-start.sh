@@ -2,13 +2,13 @@
 
 ################################################################################
 # Debugging code.  If this works, you can comment this out.
-echo "" >> ~/claude-hook-debug.log
-echo "##################################################" >> ~/claude-hook-debug.log
-echo "$(date +%s) - record-task-start.sh" >> ~/claude-hook-debug.log
-echo "" >> ~/claude-hook-debug.log  
-
-exec >> ~/claude-hook-debug.log 2>&1
-set -x
+#echo "" >> ~/claude-hook-debug.log
+#echo "##################################################" >> ~/claude-hook-debug.log
+#echo "$(date +%s) - record-task-start.sh" >> ~/claude-hook-debug.log
+#echo "" >> ~/claude-hook-debug.log  
+#
+#exec >> ~/claude-hook-debug.log 2>&1
+#set -x
 ################################################################################
 
 TIMESTAMP_FILE="${HOME}/claude_task_start_$(basename $PWD)"
