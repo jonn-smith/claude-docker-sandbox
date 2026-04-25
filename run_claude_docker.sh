@@ -4,8 +4,14 @@ set -euo pipefail
 # Here we set our directories and credentials so we can authenticate and have
 # a proper sandbox.  It's VERY important that we don't let these agents run
 # freely around our machine.
-PROJECTS_DIR=/juffowup2/claude_projects/workspace
-PROJECTS_DIR=/juffowup2/claude_projects/workspace/gCNV_Calling
+if [[ ! -v CLAUDE_SANDBOX_PROJECTS_DIR ]] || [[ -z "$CLAUDE_SANDBOX_PROJECTS_DIR" ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_PROJECTS_DIR is not set or is empty." >&2
+    echo "                You must set this env var before starting the docker image." >&2
+    exit 1
+fi
+
+# These directories are to store persistent state / settings.
+# Used mostly for hooks / plugins / etc.
 PERSISTENT_STATE_DIR=/juffowup2/claude_projects/claude-sandbox-persistent-state
 SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
 
@@ -43,7 +49,7 @@ fi
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
 exec docker run --rm -it \
-  -v ${PROJECTS_DIR}:/workspace \
+  -v ${CLAUDE_SANDBOX_PROJECTS_DIR}:/workspace \
   -v "${SANDBOX_HOME}/.claude:/home/claude/.claude" \
   -v "${SANDBOX_HOME}/.claude.json:/home/claude/.claude.json" \
   -v "${HOME}/.claude/.credentials.json:/home/claude/.claude/.credentials.json" \
