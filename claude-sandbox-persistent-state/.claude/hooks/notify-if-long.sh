@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
 
 ################################################################################
+# Debugging code.  If this works, you can comment this out.
+echo "" >> ~/claude-hook-debug.log
+echo "##################################################" >> ~/claude-hook-debug.log
+echo "$(date +%s) - notify-if-long.sh" >> ~/claude-hook-debug.log
+echo "" >> ~/claude-hook-debug.log  
+
 exec >> ~/claude-hook-debug.log 2>&1
 set -x
 ################################################################################
 
-THRESHOLD=120
-TIMESTAMP_FILE="~/claude_task_start_$(basename $PWD)"
-PROMPT_FILE="~/claude_task_prompt_$(basename $PWD)"
-HOST_IP=172.17.0.1
+# Amount of time Claude must work before considering sending you an
+# email with the completion status (seconds)
+#THRESHOLD=120
+THRESHOLD=0
+
+TIMESTAMP_FILE="${HOME}/claude_task_start_$(basename $PWD)"
+PROMPT_FILE="${HOME}/claude_task_prompt_$(basename $PWD)"
+
+# Must determine dynamically:
+HOST_IP=$(ip route | awk '/default/ {print $3}')
 SMTP_PORT=25
 
 CLAUDE_FROM_ADDRESS="claude-sandbox"
