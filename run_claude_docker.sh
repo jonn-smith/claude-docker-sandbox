@@ -16,9 +16,24 @@ if [[ ! -v CLAUDE_SANDBOX_CONTEXT_DIR ]] || [[ -z "$CLAUDE_SANDBOX_CONTEXT_DIR" 
     exit 1
 fi
 
+if [[ ! -v CLAUDE_SANDBOX_INSTANCE ]] || [[ -z "$CLAUDE_SANDBOX_INSTANCE" ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_INSTANCE is not set or is empty." >&2
+    echo "                Each sandbox needs a unique instance ID so concurrent" >&2
+    echo "                inner dockerds don't share /var/lib/docker." >&2
+    exit 1
+fi
+
+# Per-instance suffix. Each sandbox gets its own DinD volume, container name,
+# and persistent-state directory so concurrent instances don't fight over
+# /var/lib/docker, .claude/sessions, or .claude.json.
+INSTANCE_SUFFIX="-${CLAUDE_SANDBOX_INSTANCE}"
+CONTAINER_NAME="claude-sandbox-${CLAUDE_SANDBOX_INSTANCE}"
+
 # These directories are to store persistent state / settings.
 # Used mostly for hooks / plugins / etc.
-PERSISTENT_STATE_DIR=/juffowup2/claude_projects/claude-sandbox-persistent-state
+# Override with CLAUDE_SANDBOX_HOME (caller is then responsible for keeping
+# the path unique across concurrent instances).
+PERSISTENT_STATE_DIR="claude-sandbox-persistent-state${INSTANCE_SUFFIX}"
 SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
 
 # Set up settings if they don't exist:
@@ -51,17 +66,30 @@ if [ ! -f "$SANDBOX_HOME/.claude/settings.json" ] ; then
   echo '}' >> "$SANDBOX_HOME/.claude/settings.json"
 fi
 
+# Refuse to launch if this instance's DinD volume is already in use — two
+# dockerds writing the same /var/lib/docker corrupt the store.
+DIND_VOLUME="claude-dind-lib${INSTANCE_SUFFIX}"
+in_use=$(docker ps -q --filter "volume=${DIND_VOLUME}")
+if [ -n "$in_use" ]; then
+    echo "Error: instance '${CLAUDE_SANDBOX_INSTANCE}' is already running:" >&2
+    docker ps --filter "volume=${DIND_VOLUME}" \
+        --format '  {{.ID}}  {{.Names}}  ({{.Status}})' >&2
+    echo "Pick a different CLAUDE_SANDBOX_INSTANCE to launch a parallel sandbox." >&2
+    exit 1
+fi
+
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
 exec docker run --rm -it \
+  --name "${CONTAINER_NAME}" \
   -v ${CLAUDE_SANDBOX_PROJECTS_DIR}:/workspace \
   -v "${SANDBOX_HOME}/.claude:/home/claude/.claude" \
   -v "${SANDBOX_HOME}/.claude.json:/home/claude/.claude.json" \
   -v "${HOME}/.claude/.credentials.json:/home/claude/.claude/.credentials.json" \
   -v ${CLAUDE_SANDBOX_CONTEXT_DIR}:/context \
   --runtime=sysbox-runc \
-  -v claude-dind-lib:/var/lib/docker \
+  -v "${DIND_VOLUME}:/var/lib/docker" \
   -w /workspace \
   --entrypoint /home/claude/start_script.sh \
   claude-sandbox:latest "$@"

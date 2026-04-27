@@ -1,4 +1,6 @@
-claude-sandbox-persistent-state/
+claude-sandbox-persistent-state/*
+!claude-sandbox-persistent-state/README.md
+
 workspace/
 set_working_dir.sh
 
