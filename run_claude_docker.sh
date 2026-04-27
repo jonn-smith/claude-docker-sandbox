@@ -10,6 +10,12 @@ if [[ ! -v CLAUDE_SANDBOX_PROJECTS_DIR ]] || [[ -z "$CLAUDE_SANDBOX_PROJECTS_DIR
     exit 1
 fi
 
+if [[ ! -v CLAUDE_SANDBOX_CONTEXT_DIR ]] || [[ -z "$CLAUDE_SANDBOX_CONTEXT_DIR" ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_CONTEXT_DIR is not set or is empty." >&2
+    echo "                You must set this env var before starting the docker image." >&2
+    exit 1
+fi
+
 # These directories are to store persistent state / settings.
 # Used mostly for hooks / plugins / etc.
 PERSISTENT_STATE_DIR=/juffowup2/claude_projects/claude-sandbox-persistent-state
@@ -53,6 +59,7 @@ exec docker run --rm -it \
   -v "${SANDBOX_HOME}/.claude:/home/claude/.claude" \
   -v "${SANDBOX_HOME}/.claude.json:/home/claude/.claude.json" \
   -v "${HOME}/.claude/.credentials.json:/home/claude/.claude/.credentials.json" \
+  -v ${CLAUDE_SANDBOX_CONTEXT_DIR}:/context \
   --runtime=sysbox-runc \
   -v claude-dind-lib:/var/lib/docker \
   -w /workspace \

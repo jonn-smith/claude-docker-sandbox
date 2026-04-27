@@ -1,3 +1,7 @@
 claude-sandbox-persistent-state/
 workspace/
 set_working_dir.sh
+
+# Ignore the contents of the context folder:
+context_reference/*
+!context_reference/README.md
