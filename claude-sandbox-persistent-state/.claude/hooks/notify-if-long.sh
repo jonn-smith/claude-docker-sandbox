@@ -13,8 +13,7 @@
 
 # Amount of time Claude must work before considering sending you an
 # email with the completion status (seconds)
-#THRESHOLD=120
-THRESHOLD=0
+THRESHOLD=120
 
 TIMESTAMP_FILE="${HOME}/claude_task_start_$(basename $PWD)"
 PROMPT_FILE="${HOME}/claude_task_prompt_$(basename $PWD)"
