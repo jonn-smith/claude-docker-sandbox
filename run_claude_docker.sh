@@ -31,10 +31,20 @@ CONTAINER_NAME="claude-sandbox-${CLAUDE_SANDBOX_INSTANCE}"
 
 # These directories are to store persistent state / settings.
 # Used mostly for hooks / plugins / etc.
-# Override with CLAUDE_SANDBOX_HOME (caller is then responsible for keeping
-# the path unique across concurrent instances).
-PERSISTENT_STATE_DIR="claude-sandbox-persistent-state${INSTANCE_SUFFIX}"
+# Anchored to the script's own directory so the default works regardless of
+# where the user invokes from. Docker rejects bind-mount sources that aren't
+# absolute paths (it interprets them as volume names).
+# Override with CLAUDE_SANDBOX_HOME — must be an absolute path, and caller is
+# responsible for keeping it unique across concurrent instances.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PERSISTENT_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-persistent-state${INSTANCE_SUFFIX}"
 SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
+
+if [[ "$SANDBOX_HOME" != /* ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_HOME must be an absolute path." >&2
+    echo "                Got: '$SANDBOX_HOME'" >&2
+    exit 1
+fi
 
 # Set up settings if they don't exist:
 mkdir -p "$SANDBOX_HOME/.claude"
