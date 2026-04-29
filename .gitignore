@@ -1,5 +1,11 @@
-claude-sandbox-persistent-state/*
-!claude-sandbox-persistent-state/README.md
+claude-sandbox-persistent-state-*/*                                                                                                                               
+!claude-sandbox-persistent-state-*/README.md                                                                                                                      
+!claude-sandbox-persistent-state-*/.claude/                                                                                                                       
+claude-sandbox-persistent-state-*/.claude/*                                                                                                                      
+!claude-sandbox-persistent-state-*/.claude/settings.json
+!claude-sandbox-persistent-state-*/.claude/hooks/                                                                                                                
+!claude-sandbox-persistent-state-*/.claude/hooks/**   
+
 
 workspace/
 set_working_dir.sh
@@ -7,3 +13,6 @@ set_working_dir.sh
 # Ignore the contents of the context folder:
 context_reference/*
 !context_reference/README.md
+
+SAVED_SNAPSHOTS
+env.sh
