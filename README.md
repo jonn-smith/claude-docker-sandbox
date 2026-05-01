@@ -9,7 +9,7 @@ The image is a batteries-included dev environment, so `pip install`, `cargo inst
 Base: `node:22-slim`.
 
 - **Claude Code CLI** — `claude`, installed globally via npm.
-- **Python 3** — venv at `/opt/claude-venv` (on `PATH`, writable by the sandbox user), preloaded with: `numpy`, `pandas`, `matplotlib`, `scipy`, `scikit-learn`, `seaborn`, `ipython`, `jupyter`, `requests`.
+- **Python 3** — venv at `/opt/claude-venv` (on `PATH`, writable by the sandbox user), preloaded with: `numpy`, `pandas`, `matplotlib`, `scipy`, `scikit-learn`, `seaborn`, `ipython`, `jupyter`, `requests`, `headroom-ai[proxy]`.
 - **Rust** — stable toolchain (`rustc`, `cargo`, `rustup`) at `/usr/local/{cargo,rustup}`.
 - **Java 17** — Eclipse Temurin JDK at `/opt/java/openjdk`, `JAVA_HOME` exported.
 - **Dev tooling** — `git`, `curl`, `ripgrep`, `vim`, `build-essential`.
@@ -44,6 +44,23 @@ The launcher script (`run_claude_docker.sh`) forwards any arguments to `claude` 
 ```
 
 To drop into a shell instead of `claude`, change the trailing `claude "$@"` in `run_claude_docker.sh` to `/bin/bash`.
+
+## Headroom proxy (token compression)
+
+The image bundles [Headroom](https://github.com/chopratejas/headroom), a local HTTP proxy that compresses prompts, tool outputs, and history before forwarding to the Claude API. Off by default. Toggle per launch:
+
+```bash
+HEADROOM=1 ./run_claude_docker.sh                  # on
+./run_claude_docker.sh                             # off
+HEADROOM=1 ./run_claude_docker.sh --continue       # on + resume
+HEADROOM_PORT=9000 HEADROOM=1 ./run_claude_docker.sh   # custom port
+```
+
+How it works: when `HEADROOM=1`, `start_script.sh` launches `headroom proxy` on `127.0.0.1:$HEADROOM_PORT` (default 8787) and exports `ANTHROPIC_BASE_URL` so `claude` routes through it. The proxy applies AST-aware code compression, JSON-output stripping, prompt-cache prefix alignment, and recovery-on-demand for dropped messages, then forwards to `api.anthropic.com` using the existing OAuth token. Process dies with the container; nothing persists across runs. Stats: `curl http://127.0.0.1:8787/stats` from inside the container.
+
+Trust model: the proxy reads every byte of every request — that's how compression works. It runs entirely inside the same container as `claude`, so it sees the same OAuth token Claude already has and no wider trust boundary is opened. Code is Apache-2.0; pin the version in `Dockerfile`. If you don't want a third-party dep in the request path, leave `HEADROOM` unset and traffic goes direct.
+
+Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh` to make it sticky for that sandbox.
 
 ## Mounts
 

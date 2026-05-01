@@ -100,6 +100,8 @@ exec docker run --rm -it \
   -v ${CLAUDE_SANDBOX_CONTEXT_DIR}:/context \
   --runtime=sysbox-runc \
   -v "${DIND_VOLUME}:/var/lib/docker" \
+  -e HEADROOM="${HEADROOM:-0}" \
+  -e HEADROOM_PORT="${HEADROOM_PORT:-8787}" \
   -w /workspace \
   --entrypoint /home/claude/start_script.sh \
   claude-sandbox:latest "$@"
