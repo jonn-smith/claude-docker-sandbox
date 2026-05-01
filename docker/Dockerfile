@@ -56,6 +56,9 @@ RUN chmod +x /home/claude/start_dockerd.sh
 COPY --chown=claude:claude start_script.sh /home/claude/start_script.sh 
 RUN chmod +x /home/claude/start_script.sh
 
+# Set up some helpful aliases:
+RUN echo "alias ll='ls -l'" >> /home/claude/.bash_aliases
+
 WORKDIR /workspace
 CMD ["/home/claude/start_script.sh"]
 
