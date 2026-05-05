@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Aggregated test instance — uses the shared state layout so settings,
-# skills, plugins, hooks, memory, and sessions come from
-# claude-sandbox-shared/.claude (populated by ./migrate_to_shared.sh).
+# Shared-state instance — settings, skills, plugins, hooks, memory, and
+# sessions come from claude-sandbox-shared/.claude (populated by
+# ./migrate_to_shared.sh).
 #
 # Existing instances (main, B, WHB) are untouched and keep using their own
 # per-instance state. Promote them to shared mode later by adding
 # CLAUDE_SANDBOX_USE_SHARED=1 to their env.<INSTANCE>.sh.
 
-export CLAUDE_SANDBOX_INSTANCE=agg
+export CLAUDE_SANDBOX_INSTANCE=shared
 export CLAUDE_SANDBOX_USE_SHARED=1
 
 export CLAUDE_SANDBOX_CONTEXT_DIR=/juffowup2/claude_projects/context_reference

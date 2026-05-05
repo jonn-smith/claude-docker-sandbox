@@ -105,14 +105,14 @@ Existing `main` / `B` / etc. keep working in per-instance mode untouched. Test s
 ./migrate_to_shared.sh --dry-run    # preview the merge
 ./migrate_to_shared.sh              # populate claude-sandbox-shared/
 
-# launch the new aggregated instance (env.agg.sh already sets USE_SHARED=1)
-source env.agg.sh
+# launch the new shared-mode instance (env.shared.sh already sets USE_SHARED=1)
+source env.shared.sh
 ./run_claude_docker.sh
 ```
 
 `migrate_to_shared.sh` only **reads** the existing instance dirs and writes into the new `claude-sandbox-shared/`. Nothing in `claude-sandbox-persistent-state-*` is modified. Rollback = `rm -rf claude-sandbox-shared/`.
 
-Once the `agg` instance proves stable, opt other instances in by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to their `env.<INSTANCE>.sh`. Switch back any time by removing that line.
+Once the `shared` instance proves stable, opt other instances in by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to their `env.<INSTANCE>.sh`. Switch back any time by removing that line.
 
 ### Concurrency caveats (shared mode)
 
