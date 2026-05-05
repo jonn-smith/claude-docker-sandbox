@@ -64,50 +64,68 @@ Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh
 
 ## Mounts
 
-State is split between a **shared** dir (one copy across all instances) and a **per-instance** dir (write-hot state only). Shared mount lands first; per-instance subdirs are then bind-mounted on top to override the write-hot paths.
+Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 
-| Host path | Container path | Purpose | Scope |
-|---|---|---|---|
-| `$PROJECTS_DIR` | `/workspace` | Read/write workspace. CWD on launch. | per-instance (caller-supplied) |
-| `$SHARED_HOME/.claude/` | `/home/claude/.claude` | settings, skills, plugins, hooks, projects (memory), plans, tasks, sessions. | shared |
-| `$SHARED_HOME/.claude.json` | `/home/claude/.claude.json` | Onboarding state, project history, theme, cached OAuth account info. | shared |
-| `$SANDBOX_HOME/.claude/cache` | `/home/claude/.claude/cache` | Claude runtime cache. | per-instance |
-| `$SANDBOX_HOME/.claude/file-history` | `/home/claude/.claude/file-history` | Per-edit snapshots. | per-instance |
-| `$SANDBOX_HOME/.claude/backups` | `/home/claude/.claude/backups` | Auto-backups of edited files. | per-instance |
-| `$SANDBOX_HOME/.claude/shell-snapshots` | `/home/claude/.claude/shell-snapshots` | Per-shell state. | per-instance |
-| `$SANDBOX_HOME/.claude/session-env` | `/home/claude/.claude/session-env` | Per-shell env captures. | per-instance |
-| `$SANDBOX_HOME/.claude/history.jsonl` | `/home/claude/.claude/history.jsonl` | Append-on-event log; would race if shared. | per-instance |
-| `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | OAuth token. Writable so refreshes land on the host. | host-shared |
+- **Per-instance (default, `=0` or unset)** — full Claude state lives in `$SANDBOX_HOME/.claude` for this one instance. Original behavior; instances are fully independent. No shared dir touched.
+- **Shared (`=1`)** — settings/skills/plugins/hooks/projects/plans/tasks/sessions and `.claude.json` come from `$SHARED_HOME` (one copy across all shared-mode instances). Write-hot dirs (cache, file-history, backups, shell-snapshots, session-env, history.jsonl) stay in `$SANDBOX_HOME` and bind-mount on top of the shared `.claude`.
+
+### Per-instance mode (default)
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| `$PROJECTS_DIR` | `/workspace` | Read/write workspace. CWD on launch. |
+| `$SANDBOX_HOME/.claude/` | `/home/claude/.claude` | All Claude state (settings, memory, sessions, plugins, caches). |
+| `$SANDBOX_HOME/.claude.json` | `/home/claude/.claude.json` | Onboarding state, project history. |
+| `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | OAuth token (RW; refreshes land on host). |
+
+### Shared mode (opt-in)
+
+| Host path | Container path | Scope |
+|---|---|---|
+| `$PROJECTS_DIR` | `/workspace` | per-instance (caller-supplied) |
+| `$SHARED_HOME/.claude/` | `/home/claude/.claude` | shared — settings, skills, plugins, hooks, projects, plans, tasks, sessions |
+| `$SHARED_HOME/.claude.json` | `/home/claude/.claude.json` | shared — onboarding/project state |
+| `$SANDBOX_HOME/.claude/cache` | `/home/claude/.claude/cache` | per-instance |
+| `$SANDBOX_HOME/.claude/file-history` | `/home/claude/.claude/file-history` | per-instance |
+| `$SANDBOX_HOME/.claude/backups` | `/home/claude/.claude/backups` | per-instance |
+| `$SANDBOX_HOME/.claude/shell-snapshots` | `/home/claude/.claude/shell-snapshots` | per-instance |
+| `$SANDBOX_HOME/.claude/session-env` | `/home/claude/.claude/session-env` | per-instance |
+| `$SANDBOX_HOME/.claude/history.jsonl` | `/home/claude/.claude/history.jsonl` | per-instance |
+| `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | host-shared |
 
 `$SHARED_HOME` defaults to `claude-sandbox-shared/` next to `run_claude_docker.sh` (override: `CLAUDE_SANDBOX_SHARED`). `$SANDBOX_HOME` defaults to `claude-sandbox-persistent-state-${CLAUDE_SANDBOX_INSTANCE}/` (override: `CLAUDE_SANDBOX_HOME`). Both must be absolute paths.
 
 Nothing else on the host is visible to the container.
 
-### Migrating from a per-instance-only layout
+### Adopting shared mode safely (no risk to existing instances)
 
-If you already have populated `claude-sandbox-persistent-state-*` dirs from before this split, run once on the host:
+Existing `main` / `B` / etc. keep working in per-instance mode untouched. Test shared mode on a brand-new instance first:
 
 ```bash
-./migrate_to_shared.sh --dry-run    # preview
-./migrate_to_shared.sh              # do it
+./migrate_to_shared.sh --dry-run    # preview the merge
+./migrate_to_shared.sh              # populate claude-sandbox-shared/
+
+# launch the new aggregated instance (env.agg.sh already sets USE_SHARED=1)
+source env.agg.sh
+./run_claude_docker.sh
 ```
 
-Union-merges `settings.json`, `skills/`, `plugins/`, `hooks/`, `plans/`, `tasks/`, `projects/`, `sessions/`, and `.claude.json` from every instance into `claude-sandbox-shared/` (main wins conflicts), then renames the per-instance copies to `*.preshared.bak` for rollback.
+`migrate_to_shared.sh` only **reads** the existing instance dirs and writes into the new `claude-sandbox-shared/`. Nothing in `claude-sandbox-persistent-state-*` is modified. Rollback = `rm -rf claude-sandbox-shared/`.
 
-### Concurrency caveats
+Once the `agg` instance proves stable, opt other instances in by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to their `env.<INSTANCE>.sh`. Switch back any time by removing that line.
 
-Hot dirs (cache, file-history, history.jsonl, etc.) are per-instance — no race. Shared items are write-rare in practice, but two instances writing the same shared file at the same time can interleave or last-write-wins:
+### Concurrency caveats (shared mode)
+
+Hot dirs are per-instance — no race. Shared items are write-rare in practice, but two shared-mode instances writing the same file at the same time can interleave or last-write-wins:
 
 - **Sessions**: each session is its own file (`sessions/<id>.json`). Two instances using the same session id concurrently would corrupt it. Sessions are uuid-named so practical overlap is near zero.
 - **Plugin install/upgrade**: if you install a plugin in one instance while another reads `installed_plugins.json`, restart the second to pick it up cleanly.
 - **Memory (`projects/`)**: per-file atomic writes; rare contention.
 
-If concurrent overlap on a specific session ever matters, add a launch-time guard that scans `docker ps` for other claude containers using the same `--resume <id>` arg.
-
 ## Persistence
 
-- **Shared across all instances** (in `$SHARED_HOME`): settings, skills, installed plugins, hooks, memory, sessions, plans, tasks, onboarding state.
-- **Preserved per-instance** (in `$SANDBOX_HOME`): cache, file-history, backups, shell-snapshots, session-env, history.jsonl.
+- **Per-instance mode** — everything in `$SANDBOX_HOME` (settings + state + sessions + caches), preserved across runs of that instance only.
+- **Shared mode** — settings, skills, plugins, hooks, memory, sessions, plans, tasks, onboarding live in `$SHARED_HOME` (visible to all shared-mode instances). Cache, file-history, backups, shell-snapshots, session-env, history.jsonl stay per-instance.
 - **Shared with the host**: OAuth credentials (single token refreshed by whichever process needs it first).
 - **Ephemeral** (gone on `--rm` container exit): anything written outside the mounts — `pip install`, `cargo install`, `sudo apt install`, files in `/tmp`, etc. If you want these to persist, either rebuild the image with them baked in, or add the relevant directories (e.g. `/opt/claude-venv`, `/usr/local/cargo`) as additional mounts.
 

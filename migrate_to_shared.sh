@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# migrate_to_shared.sh — one-shot migration of per-instance Claude state into
-# a single shared dir, leaving write-hot state per-instance.
+# migrate_to_shared.sh — populate claude-sandbox-shared/ with a union-merge of
+# every existing per-instance Claude state dir. Leaves all existing instance
+# dirs UNTOUCHED, so old instances keep working unchanged. Only a brand-new
+# instance launched with CLAUDE_SANDBOX_USE_SHARED=1 reads from the shared
+# dir; everyone else stays on their own per-instance state.
 #
-# Strategy: union-merge the shared subset from every existing instance into
-# claude-sandbox-shared/, "first writer wins" with main going first. Then
-# rename the per-instance copies to *.preshared.bak so the move is reversible.
+# Strategy: copy "first writer wins" with main going first. No renames, no
+# deletes, no in-place modification of existing instance dirs. Idempotent —
+# rerun safely; existing files in the shared dir aren't overwritten.
 #
 # Usage:
-#   ./migrate_to_shared.sh            # do it
-#   ./migrate_to_shared.sh --dry-run  # show what it would do
+#   ./migrate_to_shared.sh            # populate shared dir
+#   ./migrate_to_shared.sh --dry-run  # show what it would copy
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,30 +98,13 @@ for d in "${ordered[@]}"; do
   done
 done
 
-# Move per-instance copies aside so launches start using the shared bind.
 echo
-echo "renaming per-instance copies to *.preshared.bak"
-for d in "${ordered[@]}"; do
-  for item in "${SHARED_ITEMS[@]}"; do
-    src="${d}/.claude/${item}"
-    [[ -e "$src" ]] || continue
-    bak="${src}.preshared.bak"
-    if [[ -e "$bak" ]]; then
-      echo "  skip ${src} ($(basename "$bak") exists)"
-      continue
-    fi
-    echo "  mv ${src} -> ${bak}"
-    run mv "$src" "$bak"
-  done
-  src="${d}/.claude.json"
-  bak="${src}.preshared.bak"
-  if [[ -f "$src" && ! -e "$bak" ]]; then
-    echo "  mv ${src} -> ${bak}"
-    run mv "$src" "$bak"
-  fi
-done
-
+echo "done. existing instance dirs untouched."
 echo
-echo "done."
-echo "next: launch a sandbox; verify skills/plugins/sessions show up."
-echo "rollback: for each *.preshared.bak, mv it back over the shared copy."
+echo "next: create an env.<NEW>.sh with"
+echo "      export CLAUDE_SANDBOX_INSTANCE=<NEW>"
+echo "      export CLAUDE_SANDBOX_USE_SHARED=1"
+echo "      then ./run_claude_docker.sh to launch the aggregated sandbox."
+echo
+echo "rollback: rm -rf ${SHARED_DIR} (only deletes the new shared copy;"
+echo "          per-instance dirs are untouched and remain usable)."

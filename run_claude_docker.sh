@@ -24,21 +24,29 @@ if [[ ! -v CLAUDE_SANDBOX_INSTANCE ]] || [[ -z "$CLAUDE_SANDBOX_INSTANCE" ]]; th
 fi
 
 # Per-instance suffix. Each sandbox gets its own DinD volume, container name,
-# and instance-private state directory so concurrent instances don't fight
-# over /var/lib/docker, write-hot caches, or shell snapshots.
+# and persistent-state directory so concurrent instances don't fight over
+# /var/lib/docker.
 INSTANCE_SUFFIX="-${CLAUDE_SANDBOX_INSTANCE}"
 CONTAINER_NAME="claude-sandbox-${CLAUDE_SANDBOX_INSTANCE}"
 
-# State is split in two:
-#   SHARED_HOME  — settings/skills/plugins/hooks/projects/sessions/plans/tasks,
-#                  plus .claude.json. One copy across all instances so installs
-#                  and memory propagate.
-#   SANDBOX_HOME — per-instance write-hot dirs (cache, file-history,
-#                  shell-snapshots, session-env, backups, history.jsonl) so
-#                  concurrent instances don't race on append-heavy files.
+# Two layout modes, picked by CLAUDE_SANDBOX_USE_SHARED:
 #
-# Both are anchored to the script dir by default so the layout is portable.
-# Override with CLAUDE_SANDBOX_HOME / CLAUDE_SANDBOX_SHARED — must be absolute.
+#   0 (default) — full per-instance state at $SANDBOX_HOME/.claude. Settings,
+#                 skills, plugins, sessions, hot dirs all live here. One copy
+#                 per instance. Original layout, fully self-contained.
+#
+#   1           — split layout. $SHARED_HOME holds settings/skills/plugins/
+#                 hooks/projects/plans/tasks/sessions and .claude.json (one
+#                 copy across all instances using shared mode). $SANDBOX_HOME
+#                 holds only write-hot dirs (cache, file-history, backups,
+#                 shell-snapshots, session-env, history.jsonl). Per-instance
+#                 overlays bind-mount on top of the shared .claude.
+#
+# Existing per-instance dirs are untouched when USE_SHARED=0, so old instances
+# keep working exactly as before. Opt new instances into shared mode by
+# exporting CLAUDE_SANDBOX_USE_SHARED=1 in their env.<INSTANCE>.sh.
+USE_SHARED="${CLAUDE_SANDBOX_USE_SHARED:-0}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PERSISTENT_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-persistent-state${INSTANCE_SUFFIX}"
 SHARED_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-shared"
@@ -50,17 +58,16 @@ if [[ "$SANDBOX_HOME" != /* ]]; then
     echo "                Got: '$SANDBOX_HOME'" >&2
     exit 1
 fi
-if [[ "$SHARED_HOME" != /* ]]; then
+if [[ "$USE_SHARED" == "1" && "$SHARED_HOME" != /* ]]; then
     echo "CRITICAL ERROR: CLAUDE_SANDBOX_SHARED must be an absolute path." >&2
     echo "                Got: '$SHARED_HOME'" >&2
     exit 1
 fi
 
-# Bootstrap shared dir + default settings.json (only on first ever launch).
-mkdir -p "$SHARED_HOME/.claude"
-[ -s "$SHARED_HOME/.claude.json" ] || echo '{}' > "$SHARED_HOME/.claude.json"
-if [ ! -f "$SHARED_HOME/.claude/settings.json" ] ; then
-  cat > "$SHARED_HOME/.claude/settings.json" <<'JSON'
+# Default settings.json content for first-ever launch of an empty state dir.
+write_default_settings() {
+  local target="$1"
+  cat > "$target" <<'JSON'
 {
   "hooks": {
     "UserPromptSubmit": [
@@ -86,17 +93,31 @@ if [ ! -f "$SHARED_HOME/.claude/settings.json" ] ; then
   }
 }
 JSON
-fi
+}
 
-# Bootstrap per-instance hot-state dir. Bind-mount sources must exist before
-# `docker run` or Docker silently creates them as the wrong type (dir vs file).
-mkdir -p \
-  "$SANDBOX_HOME/.claude/cache" \
-  "$SANDBOX_HOME/.claude/file-history" \
-  "$SANDBOX_HOME/.claude/backups" \
-  "$SANDBOX_HOME/.claude/shell-snapshots" \
-  "$SANDBOX_HOME/.claude/session-env"
-touch "$SANDBOX_HOME/.claude/history.jsonl"
+if [[ "$USE_SHARED" == "1" ]]; then
+    # --- shared layout ---------------------------------------------------
+    mkdir -p "$SHARED_HOME/.claude"
+    [ -s "$SHARED_HOME/.claude.json" ] || echo '{}' > "$SHARED_HOME/.claude.json"
+    [ -f "$SHARED_HOME/.claude/settings.json" ] || write_default_settings "$SHARED_HOME/.claude/settings.json"
+
+    # Per-instance hot-state dirs. Bind-mount sources must exist before
+    # `docker run` or Docker creates them as the wrong type (dir vs file).
+    mkdir -p \
+      "$SANDBOX_HOME/.claude/cache" \
+      "$SANDBOX_HOME/.claude/file-history" \
+      "$SANDBOX_HOME/.claude/backups" \
+      "$SANDBOX_HOME/.claude/shell-snapshots" \
+      "$SANDBOX_HOME/.claude/session-env"
+    touch "$SANDBOX_HOME/.claude/history.jsonl"
+    echo "layout: shared (SHARED_HOME=${SHARED_HOME}, hot=${SANDBOX_HOME})"
+else
+    # --- original per-instance layout ------------------------------------
+    mkdir -p "$SANDBOX_HOME/.claude"
+    [ -s "$SANDBOX_HOME/.claude.json" ] || echo '{}' > "$SANDBOX_HOME/.claude.json"
+    [ -f "$SANDBOX_HOME/.claude/settings.json" ] || write_default_settings "$SANDBOX_HOME/.claude/settings.json"
+    echo "layout: per-instance (SANDBOX_HOME=${SANDBOX_HOME})"
+fi
 
 # Refuse to launch if this instance's DinD volume is already in use — two
 # dockerds writing the same /var/lib/docker corrupt the store.
@@ -110,27 +131,41 @@ if [ -n "$in_use" ]; then
     exit 1
 fi
 
+# Build the mount args based on layout. Later mounts shadow earlier ones, so
+# in shared mode the per-instance hot dirs override the shared parent.
+MOUNTS=( -v "${CLAUDE_SANDBOX_PROJECTS_DIR}:/workspace" )
+if [[ "$USE_SHARED" == "1" ]]; then
+    MOUNTS+=(
+      -v "${SHARED_HOME}/.claude:/home/claude/.claude"
+      -v "${SHARED_HOME}/.claude.json:/home/claude/.claude.json"
+      -v "${SANDBOX_HOME}/.claude/cache:/home/claude/.claude/cache"
+      -v "${SANDBOX_HOME}/.claude/file-history:/home/claude/.claude/file-history"
+      -v "${SANDBOX_HOME}/.claude/backups:/home/claude/.claude/backups"
+      -v "${SANDBOX_HOME}/.claude/shell-snapshots:/home/claude/.claude/shell-snapshots"
+      -v "${SANDBOX_HOME}/.claude/session-env:/home/claude/.claude/session-env"
+      -v "${SANDBOX_HOME}/.claude/history.jsonl:/home/claude/.claude/history.jsonl"
+    )
+else
+    MOUNTS+=(
+      -v "${SANDBOX_HOME}/.claude:/home/claude/.claude"
+      -v "${SANDBOX_HOME}/.claude.json:/home/claude/.claude.json"
+    )
+fi
+MOUNTS+=(
+  -v "${HOME}/.claude/.credentials.json:/home/claude/.claude/.credentials.json"
+  -v "${CLAUDE_SANDBOX_CONTEXT_DIR}:/context"
+  -v "${DIND_VOLUME}:/var/lib/docker"
+)
+
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
 exec docker run --rm -it \
   --name "${CONTAINER_NAME}" \
-  -v ${CLAUDE_SANDBOX_PROJECTS_DIR}:/workspace \
-  -v "${SHARED_HOME}/.claude:/home/claude/.claude" \
-  -v "${SHARED_HOME}/.claude.json:/home/claude/.claude.json" \
-  -v "${SANDBOX_HOME}/.claude/cache:/home/claude/.claude/cache" \
-  -v "${SANDBOX_HOME}/.claude/file-history:/home/claude/.claude/file-history" \
-  -v "${SANDBOX_HOME}/.claude/backups:/home/claude/.claude/backups" \
-  -v "${SANDBOX_HOME}/.claude/shell-snapshots:/home/claude/.claude/shell-snapshots" \
-  -v "${SANDBOX_HOME}/.claude/session-env:/home/claude/.claude/session-env" \
-  -v "${SANDBOX_HOME}/.claude/history.jsonl:/home/claude/.claude/history.jsonl" \
-  -v "${HOME}/.claude/.credentials.json:/home/claude/.claude/.credentials.json" \
-  -v ${CLAUDE_SANDBOX_CONTEXT_DIR}:/context \
+  "${MOUNTS[@]}" \
   --runtime=sysbox-runc \
-  -v "${DIND_VOLUME}:/var/lib/docker" \
   -e HEADROOM="${HEADROOM:-0}" \
   -e HEADROOM_PORT="${HEADROOM_PORT:-8787}" \
   -w /workspace \
   --entrypoint /home/claude/start_script.sh \
   claude-sandbox:latest "$@"
-
