@@ -4,6 +4,20 @@ A Docker-based sandbox for running the [Claude Code](https://docs.claude.com/en/
 
 The image is a batteries-included dev environment, so `pip install`, `cargo install`, and `sudo apt install` work without network delay on launch.
 
+# Features
+Look, this uses a heavy docker image, and it's suited to my (Jonn's) needs.  Nevertheless you may find it useful.
+
+Beyond the normal setup and build features, this sandbox has:
+- Automated emails for prompts that take longer than <CONFIGURABLE> seconds to complete (default 120)
+- A built-in, pre-configured [headroom](https://github.com/chopratejas/headroom) installation (runtime-disable-able)
+- A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra (uses host machine credentials; configurable; runtime-disable-able).
+
+I've tried to include everything I need for my typical work.
+
+```
+NOTE: This Terra / fiss-mcp server business is potentially dangerous if claude decides to get drunk, start it with `--allow-writes`, and run a bunch of workflows or something.
+```
+
 ## Quick start (fresh clone)
 
 ```bash
@@ -22,6 +36,13 @@ cd docker && make && cd ..
 source env.example.sh
 ./run_claude_docker.sh
 ```
+
+### At first run, after initial setup, make sure to:
+
+1. Install the [caveman](https://github.com/JuliusBrussee/caveman) plugin:
+`claude plugin marketplace add JuliusBrussee/caveman && claude plugin install caveman@caveman`
+
+### Multi-instance mode
 
 For a second concurrent instance, copy the template and change the instance name:
 
