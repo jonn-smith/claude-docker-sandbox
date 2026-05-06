@@ -22,11 +22,18 @@ PROMPT_FILE="${HOME}/claude_task_prompt_$(basename $PWD)"
 HOST_IP=$(ip route | awk '/default/ {print $3}')
 SMTP_PORT=25
 
-CLAUDE_FROM_ADDRESS="claude-sandbox"
-REAL_HOST_NAME="dsde-methods-jonn-juffowup"
-YOUR_EMAIL="jonn@broadinstitute.org"
+# Notification config — set via env in env.<INSTANCE>.sh, forwarded by
+# run_claude_docker.sh into the container. Hook is a no-op if
+# CLAUDE_NOTIFY_EMAIL is unset/empty.
+CLAUDE_FROM_ADDRESS="${CLAUDE_NOTIFY_FROM:-claude-sandbox}"
+REAL_HOST_NAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}"
+YOUR_EMAIL="${CLAUDE_NOTIFY_EMAIL:-}"
 
 ################################################################################
+
+if [[ -z "$YOUR_EMAIL" ]]; then
+  exit 0
+fi
 
 if [ ! -f "$TIMESTAMP_FILE" ]; then
   echo "No timestamp file found, skipping"

@@ -33,5 +33,14 @@ export CLAUDE_SANDBOX_INSTANCE=main
 # auto-created on first use. Override to point at your real project tree.
 export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 
+# Email notifications when a Claude task takes longer than the threshold in
+# claude-sandbox-shared/.claude/hooks/notify-if-long.sh. Leave
+# CLAUDE_NOTIFY_EMAIL unset/empty to disable. CLAUDE_NOTIFY_FROM and
+# CLAUDE_NOTIFY_HOSTNAME shape the From/Message-ID headers; they default to
+# "claude-sandbox" and the host's $(hostname -f) if not set.
+#export CLAUDE_NOTIFY_EMAIL=you@example.com
+#export CLAUDE_NOTIFY_FROM=claude-sandbox
+#export CLAUDE_NOTIFY_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
+
 unset __ENV_SCRIPT_DIR
 
