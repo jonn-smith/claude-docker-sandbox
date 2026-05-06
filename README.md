@@ -56,7 +56,7 @@ Approximate image size: ~3 GB.
 ## Build
 
 ```bash
-cd claude-sandbox_docker
+cd docker
 make
 ```
 
