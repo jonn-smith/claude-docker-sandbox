@@ -67,6 +67,11 @@ postconf -h mynetworks
 
 ################################################################################
 
+echo "Installing claude code"
+curl -fsSL https://claude.ai/install.sh | bash
+
+################################################################################
+
 echo 
 echo 
 echo 
