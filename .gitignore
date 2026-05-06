@@ -1,10 +1,16 @@
-claude-sandbox-persistent-state-*/*                                                                                                                               
-!claude-sandbox-persistent-state-*/README.md                                                                                                                      
-!claude-sandbox-persistent-state-*/.claude/                                                                                                                       
-claude-sandbox-persistent-state-*/.claude/*                                                                                                                      
-!claude-sandbox-persistent-state-*/.claude/settings.json
-!claude-sandbox-persistent-state-*/.claude/hooks/                                                                                                                
-!claude-sandbox-persistent-state-*/.claude/hooks/**   
+# Per-instance state dirs are runtime — keep only the README placeholder.
+# Default hooks/settings come from claude-sandbox-shared/, not from any
+# instance dir.
+claude-sandbox-persistent-state-*/*
+!claude-sandbox-persistent-state-*/README.md
+
+# Shared dir is also runtime, but track the default hooks scripts so a fresh
+# clone has working hooks on first launch.
+claude-sandbox-shared/*
+!claude-sandbox-shared/.claude/
+claude-sandbox-shared/.claude/*
+!claude-sandbox-shared/.claude/hooks/
+!claude-sandbox-shared/.claude/hooks/**
 
 
 workspace/

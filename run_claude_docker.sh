@@ -69,9 +69,10 @@ if [[ "$USE_SHARED" == "1" && "$SHARED_HOME" != /* ]]; then
 fi
 
 # Default hooks committed in the repo so a fresh clone has working hooks.
-# Source: claude-sandbox-persistent-state-main/.claude/hooks/. New instances
-# (per-instance or shared mode) get them copied in on first launch.
-DEFAULT_HOOKS_DIR="${SCRIPT_DIR}/claude-sandbox-persistent-state-main/.claude/hooks"
+# Source: claude-sandbox-shared/.claude/hooks/. Shared-mode launches use
+# them in place; per-instance launches get a copy on first launch via
+# seed_hooks.
+DEFAULT_HOOKS_DIR="${SCRIPT_DIR}/claude-sandbox-shared/.claude/hooks"
 
 # Seed hooks dir from DEFAULT_HOOKS_DIR if target doesn't exist yet. First
 # launch of a new instance gets the committed defaults; subsequent launches
