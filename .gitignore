@@ -13,7 +13,8 @@ claude-sandbox-shared/.claude/*
 !claude-sandbox-shared/.claude/hooks/**
 
 
-workspace/
+workspace/*
+!workspace/README.md
 set_working_dir.sh
 
 # Ignore the contents of the context folder:
