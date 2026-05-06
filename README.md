@@ -29,6 +29,7 @@ NOTE: This Terra / fiss-mcp server business is potentially dangerous if claude d
 claude   # then /login
 
 # 3. Build the image
+# NOTE: This step takes ~2200s or 36 minutes.
 cd docker && make && cd ..
 
 # 4. Launch the default "main" shared-mode instance.
