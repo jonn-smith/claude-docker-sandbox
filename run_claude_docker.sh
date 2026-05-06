@@ -36,11 +36,15 @@ CONTAINER_NAME="claude-sandbox-${CLAUDE_SANDBOX_INSTANCE}"
 #                 per instance. Original layout, fully self-contained.
 #
 #   1           — split layout. $SHARED_HOME holds settings/skills/plugins/
-#                 hooks/projects/plans/tasks/sessions and .claude.json (one
-#                 copy across all instances using shared mode). $SANDBOX_HOME
-#                 holds only write-hot dirs (cache, file-history, backups,
-#                 shell-snapshots, session-env, history.jsonl). Per-instance
+#                 hooks/projects/plans/tasks/sessions, one copy across all
+#                 shared-mode instances. $SANDBOX_HOME holds write-hot dirs
+#                 (cache, file-history, backups, shell-snapshots,
+#                 session-env, history.jsonl) and .claude.json. Per-instance
 #                 overlays bind-mount on top of the shared .claude.
+#                 .claude.json stays per-instance because it is rewritten
+#                 whole on every change and holds per-project state
+#                 (allowedTools, mcpServers, history) that would race or
+#                 collide if shared.
 #
 # Existing per-instance dirs are untouched when USE_SHARED=0, so old instances
 # keep working exactly as before. Opt new instances into shared mode by
@@ -98,11 +102,13 @@ JSON
 if [[ "$USE_SHARED" == "1" ]]; then
     # --- shared layout ---------------------------------------------------
     mkdir -p "$SHARED_HOME/.claude"
-    [ -s "$SHARED_HOME/.claude.json" ] || echo '{}' > "$SHARED_HOME/.claude.json"
     [ -f "$SHARED_HOME/.claude/settings.json" ] || write_default_settings "$SHARED_HOME/.claude/settings.json"
 
     # Per-instance hot-state dirs. Bind-mount sources must exist before
     # `docker run` or Docker creates them as the wrong type (dir vs file).
+    # .claude.json stays per-instance: it's rewritten whole on every change
+    # and holds per-project allowedTools/mcpServers/history that race under
+    # concurrent shared-mode launches.
     mkdir -p \
       "$SANDBOX_HOME/.claude/cache" \
       "$SANDBOX_HOME/.claude/file-history" \
@@ -110,6 +116,7 @@ if [[ "$USE_SHARED" == "1" ]]; then
       "$SANDBOX_HOME/.claude/shell-snapshots" \
       "$SANDBOX_HOME/.claude/session-env"
     touch "$SANDBOX_HOME/.claude/history.jsonl"
+    [ -s "$SANDBOX_HOME/.claude.json" ] || echo '{}' > "$SANDBOX_HOME/.claude.json"
     echo "layout: shared (SHARED_HOME=${SHARED_HOME}, hot=${SANDBOX_HOME})"
 else
     # --- original per-instance layout ------------------------------------
@@ -137,7 +144,7 @@ MOUNTS=( -v "${CLAUDE_SANDBOX_PROJECTS_DIR}:/workspace" )
 if [[ "$USE_SHARED" == "1" ]]; then
     MOUNTS+=(
       -v "${SHARED_HOME}/.claude:/home/claude/.claude"
-      -v "${SHARED_HOME}/.claude.json:/home/claude/.claude.json"
+      -v "${SANDBOX_HOME}/.claude.json:/home/claude/.claude.json"
       -v "${SANDBOX_HOME}/.claude/cache:/home/claude/.claude/cache"
       -v "${SANDBOX_HOME}/.claude/file-history:/home/claude/.claude/file-history"
       -v "${SANDBOX_HOME}/.claude/backups:/home/claude/.claude/backups"

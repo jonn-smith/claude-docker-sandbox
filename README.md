@@ -67,7 +67,7 @@ Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh
 Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 
 - **Per-instance (default, `=0` or unset)** — full Claude state lives in `$SANDBOX_HOME/.claude` for this one instance. Original behavior; instances are fully independent. No shared dir touched.
-- **Shared (`=1`)** — settings/skills/plugins/hooks/projects/plans/tasks/sessions and `.claude.json` come from `$SHARED_HOME` (one copy across all shared-mode instances). Write-hot dirs (cache, file-history, backups, shell-snapshots, session-env, history.jsonl) stay in `$SANDBOX_HOME` and bind-mount on top of the shared `.claude`.
+- **Shared (`=1`)** — settings/skills/plugins/hooks/projects/plans/tasks/sessions come from `$SHARED_HOME` (one copy across all shared-mode instances). `.claude.json` plus write-hot dirs (cache, file-history, backups, shell-snapshots, session-env, history.jsonl) stay in `$SANDBOX_HOME` and bind-mount on top of the shared `.claude`. `.claude.json` is per-instance because it's rewritten whole on every change and holds per-project allowedTools/mcpServers/history that would race if shared.
 
 ### Per-instance mode (default)
 
@@ -84,7 +84,7 @@ Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 |---|---|---|
 | `$PROJECTS_DIR` | `/workspace` | per-instance (caller-supplied) |
 | `$SHARED_HOME/.claude/` | `/home/claude/.claude` | shared — settings, skills, plugins, hooks, projects, plans, tasks, sessions |
-| `$SHARED_HOME/.claude.json` | `/home/claude/.claude.json` | shared — onboarding/project state |
+| `$SANDBOX_HOME/.claude.json` | `/home/claude/.claude.json` | per-instance — onboarding state, per-project allowedTools/mcpServers/history. Rewritten whole on every change, would race if shared. |
 | `$SANDBOX_HOME/.claude/cache` | `/home/claude/.claude/cache` | per-instance |
 | `$SANDBOX_HOME/.claude/file-history` | `/home/claude/.claude/file-history` | per-instance |
 | `$SANDBOX_HOME/.claude/backups` | `/home/claude/.claude/backups` | per-instance |

@@ -65,21 +65,12 @@ echo
 
 run mkdir -p "${SHARED_DIR}/.claude"
 
-# Bring .claude.json from the first instance that has one, no clobber.
-if [[ ! -e "${SHARED_DIR}/.claude.json" ]]; then
-  for d in "${ordered[@]}"; do
-    src="${d}/.claude.json"
-    if [[ -f "$src" ]]; then
-      echo "copy .claude.json from $(basename "$d")"
-      run cp -a "$src" "${SHARED_DIR}/.claude.json"
-      break
-    fi
-  done
-fi
-if [[ ! -e "${SHARED_DIR}/.claude.json" ]]; then
-  echo "seed empty .claude.json"
-  run bash -c "echo '{}' > '${SHARED_DIR}/.claude.json'"
-fi
+# .claude.json stays per-instance — it's rewritten whole on every Claude
+# change and holds per-project allowedTools/mcpServers/history. Sharing it
+# across concurrent instances would race; merging across instances would
+# pick a winner and silently drop the others' per-project state. So leave
+# each instance's existing .claude.json in place; run_claude_docker.sh
+# bootstraps a fresh one for new instances.
 
 # Union-merge each shared item, no-clobber so first wins.
 for d in "${ordered[@]}"; do
