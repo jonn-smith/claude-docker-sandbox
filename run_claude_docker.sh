@@ -68,6 +68,22 @@ if [[ "$USE_SHARED" == "1" && "$SHARED_HOME" != /* ]]; then
     exit 1
 fi
 
+# Default hooks committed in the repo so a fresh clone has working hooks.
+# Source: claude-sandbox-persistent-state-main/.claude/hooks/. New instances
+# (per-instance or shared mode) get them copied in on first launch.
+DEFAULT_HOOKS_DIR="${SCRIPT_DIR}/claude-sandbox-persistent-state-main/.claude/hooks"
+
+# Seed hooks dir from DEFAULT_HOOKS_DIR if target doesn't exist yet. First
+# launch of a new instance gets the committed defaults; subsequent launches
+# leave user customizations alone.
+seed_hooks() {
+  local target="$1"
+  if [[ ! -d "$target" && -d "$DEFAULT_HOOKS_DIR" ]]; then
+    mkdir -p "$(dirname "$target")"
+    cp -a "$DEFAULT_HOOKS_DIR" "$target"
+  fi
+}
+
 # Default settings.json content for first-ever launch of an empty state dir.
 write_default_settings() {
   local target="$1"
@@ -102,6 +118,7 @@ JSON
 if [[ "$USE_SHARED" == "1" ]]; then
     # --- shared layout ---------------------------------------------------
     mkdir -p "$SHARED_HOME/.claude"
+    seed_hooks "$SHARED_HOME/.claude/hooks"
     [ -f "$SHARED_HOME/.claude/settings.json" ] || write_default_settings "$SHARED_HOME/.claude/settings.json"
 
     # Per-instance hot-state dirs. Bind-mount sources must exist before
@@ -121,6 +138,7 @@ if [[ "$USE_SHARED" == "1" ]]; then
 else
     # --- original per-instance layout ------------------------------------
     mkdir -p "$SANDBOX_HOME/.claude"
+    seed_hooks "$SANDBOX_HOME/.claude/hooks"
     [ -s "$SANDBOX_HOME/.claude.json" ] || echo '{}' > "$SANDBOX_HOME/.claude.json"
     [ -f "$SANDBOX_HOME/.claude/settings.json" ] || write_default_settings "$SANDBOX_HOME/.claude/settings.json"
     echo "layout: per-instance (SANDBOX_HOME=${SANDBOX_HOME})"

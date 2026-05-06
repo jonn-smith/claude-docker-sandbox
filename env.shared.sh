@@ -10,7 +10,6 @@
 export CLAUDE_SANDBOX_INSTANCE=shared
 export CLAUDE_SANDBOX_USE_SHARED=1
 
-export CLAUDE_SANDBOX_CONTEXT_DIR=/juffowup2/claude_projects/context_reference
-
-# Select your project dir:
-export CLAUDE_SANDBOX_PROJECTS_DIR=/juffowup2/claude_projects
+# Required: edit these to match your host layout (absolute paths only).
+export CLAUDE_SANDBOX_CONTEXT_DIR=/path/to/your/context_reference
+export CLAUDE_SANDBOX_PROJECTS_DIR=/path/to/your/projects

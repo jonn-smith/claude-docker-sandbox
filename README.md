@@ -4,6 +4,30 @@ A Docker-based sandbox for running the [Claude Code](https://docs.claude.com/en/
 
 The image is a batteries-included dev environment, so `pip install`, `cargo install`, and `sudo apt install` work without network delay on launch.
 
+## Quick start (fresh clone)
+
+```bash
+# 1. Install host prerequisites (sysbox runtime, postfix mynetworks)
+./setup_host.sh
+
+# 2. Authenticate Claude Code on the host once. Creates
+#    ~/.claude/.credentials.json which the sandbox bind-mounts in.
+claude   # then /login
+
+# 3. Build the image
+cd docker && make && cd ..
+
+# 4. Make an env file for your first instance
+cp env.main.sh.example env.main.sh
+$EDITOR env.main.sh   # set CLAUDE_SANDBOX_PROJECTS_DIR + _CONTEXT_DIR
+
+# 5. Launch
+source env.main.sh
+./run_claude_docker.sh
+```
+
+For multiple parallel instances or shared settings/skills/plugins across instances, see [Mounts](#mounts) and [Adopting shared mode](#adopting-shared-mode-safely-no-risk-to-existing-instances).
+
 ## What's in the image
 
 Base: `node:22-slim`.
