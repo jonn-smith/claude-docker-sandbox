@@ -26,8 +26,13 @@ ENV CARGO_HOME=/usr/local/cargo \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
       sh -s -- -y --no-modify-path --default-toolchain stable
 
-RUN groupadd -g 1016 claude && \
-    useradd -m -u 1015 -g 1016 -s /bin/bash claude && \
+# UID/GID match the host user that built the image so bind-mounted files
+# in /workspace and /home/claude/.claude have the right owner. Pass via
+# `make` (CLAUDE_UID / CLAUDE_GID) — it auto-fills from $(id -u) / $(id -g).
+ARG CLAUDE_UID=1015
+ARG CLAUDE_GID=1016
+RUN groupadd -g ${CLAUDE_GID} claude && \
+    useradd -m -u ${CLAUDE_UID} -g ${CLAUDE_GID} -s /bin/bash claude && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
     chmod 440 /etc/sudoers.d/claude && \
     chown -R claude:claude /usr/local/cargo /usr/local/rustup
