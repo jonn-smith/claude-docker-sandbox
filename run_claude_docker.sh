@@ -198,3 +198,4 @@ exec docker run --rm -it \
   -w /workspace \
   --entrypoint /home/claude/start_script.sh \
   claude-sandbox:latest "$@"
+

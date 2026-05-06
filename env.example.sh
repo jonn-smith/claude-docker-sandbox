@@ -20,6 +20,15 @@ export CLAUDE_SANDBOX_USE_SHARED=1
 # Optional: turn the Headroom token-compression proxy on for this instance.
 export HEADROOM=1
 
+# Email notifications when a Claude task takes longer than the threshold in
+# claude-sandbox-shared/.claude/hooks/notify-if-long.sh. Leave
+# CLAUDE_NOTIFY_EMAIL unset/empty to disable. CLAUDE_NOTIFY_FROM and
+# CLAUDE_NOTIFY_HOSTNAME shape the From/Message-ID headers; they default to
+# "claude-sandbox" and the host's $(hostname -f) if not set.
+#export CLAUDE_NOTIFY_EMAIL=you@example.com
+#export CLAUDE_NOTIFY_FROM=claude-sandbox
+#export CLAUDE_NOTIFY_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
+
 # Read-only context dir, bind-mounted to /context. Defaults to the
 # context_reference/ dir tracked in the repo.
 export CLAUDE_SANDBOX_CONTEXT_DIR="${__ENV_SCRIPT_DIR}/context_reference"
@@ -32,15 +41,6 @@ export CLAUDE_SANDBOX_INSTANCE=main
 # be an absolute path. Defaults to a workspace/ dir next to this script,
 # auto-created on first use. Override to point at your real project tree.
 export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
-
-# Email notifications when a Claude task takes longer than the threshold in
-# claude-sandbox-shared/.claude/hooks/notify-if-long.sh. Leave
-# CLAUDE_NOTIFY_EMAIL unset/empty to disable. CLAUDE_NOTIFY_FROM and
-# CLAUDE_NOTIFY_HOSTNAME shape the From/Message-ID headers; they default to
-# "claude-sandbox" and the host's $(hostname -f) if not set.
-#export CLAUDE_NOTIFY_EMAIL=you@example.com
-#export CLAUDE_NOTIFY_FROM=claude-sandbox
-#export CLAUDE_NOTIFY_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 
 unset __ENV_SCRIPT_DIR
 
