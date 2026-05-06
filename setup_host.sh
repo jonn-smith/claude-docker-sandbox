@@ -5,10 +5,15 @@
 set -euo pipefail
 
 ################################################################################
+echo "Installing essential packages..."
+
+sudo apt update
+sudo apt-get install -y git curl vim build-essential
+
+################################################################################
 
 echo "Installing docker"
 # Add Docker's official GPG key:
-sudo apt update
 sudo apt install -y ca-certificates curl
 sudo install -m 0755 -d /etc/apt/keyrings
 sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
@@ -42,7 +47,7 @@ sudo apt install -y ./sysbox-ce_0.6.7-0.linux_amd64.deb
 # postinst restarts dockerd, registers sysbox-runc in /etc/docker/daemon.json
 
 #Verify:
-docker info | grep -i runtime
+sudo docker info | grep -i runtime
 # Runtimes: io.containerd.runc.v2 runc sysbox-runc
 
 ################################################################################
@@ -59,4 +64,12 @@ sudo postconf -e 'mynetworks = 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/
 sudo postfix reload
 echo -n "New value: "
 postconf -h mynetworks
+
+################################################################################
+
+echo 
+echo 
+echo 
+echo 
+echo "YOU MUST LOG OUT AND LOG BACK IN FOR DOCKER GROUP SETTINGS TO PROPAGATE CORRECTLY"
 
