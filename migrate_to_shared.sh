@@ -20,32 +20,17 @@ SHARED_DIR="${SCRIPT_DIR}/claude-sandbox-shared"
 DRY=0
 [[ "${1:-}" == "--dry-run" ]] && DRY=1
 
-# Denylist — everything else in .claude/ gets merged into the shared dir.
-# Using a denylist means future Claude Code versions that add new top-level
-# subdirs (ide/, commands/, agents/, mcp/, ...) get shared automatically.
-#
-# Reasons each entry is excluded:
-#   backups, cache, file-history, history.jsonl,
-#   session-env, shell-snapshots         — write-hot; race if shared
-#   .credentials.json                    — host-mounted; never copy
-PER_INSTANCE_HOT=(
-  backups
-  cache
-  file-history
-  history.jsonl
-  session-env
-  shell-snapshots
-  .credentials.json
+# Items to share (everything else stays per-instance):
+SHARED_ITEMS=(
+  settings.json
+  skills
+  plugins
+  hooks
+  plans
+  tasks
+  projects
+  sessions
 )
-
-# Helper: is "$1" in PER_INSTANCE_HOT?
-is_hot() {
-  local x
-  for x in "${PER_INSTANCE_HOT[@]}"; do
-    [[ "$x" == "$1" ]] && return 0
-  done
-  return 1
-}
 
 shopt -s nullglob
 instances=( "${SCRIPT_DIR}"/claude-sandbox-persistent-state-* )
@@ -96,23 +81,16 @@ if [[ ! -e "${SHARED_DIR}/.claude.json" ]]; then
   run bash -c "echo '{}' > '${SHARED_DIR}/.claude.json'"
 fi
 
-# Union-merge every top-level entry in .claude/ that isn't on the denylist.
-# Includes hidden entries like .caveman-active. First instance wins on
-# file-level conflicts.
+# Union-merge each shared item, no-clobber so first wins.
 for d in "${ordered[@]}"; do
   echo "merging from $(basename "$d")"
-  shopt -s dotglob nullglob
-  entries=( "$d"/.claude/* )
-  shopt -u dotglob nullglob
-  for src in "${entries[@]}"; do
-    item="$(basename "$src")"
-    if is_hot "$item"; then
-      continue
-    fi
+  for item in "${SHARED_ITEMS[@]}"; do
+    src="${d}/.claude/${item}"
     dst="${SHARED_DIR}/.claude/${item}"
+    [[ -e "$src" ]] || continue
     if [[ -d "$src" ]]; then
       run mkdir -p "$dst"
-      # cp -an: archive + no-clobber. Trailing /. so contents merge.
+      # cp -an: archive + no-clobber. Use trailing /. so contents merge.
       run cp -an "${src}/." "${dst}/"
     else
       [[ -e "$dst" ]] || run cp -a "$src" "$dst"
