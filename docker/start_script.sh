@@ -22,10 +22,14 @@ if [[ "${HEADROOM:-0}" == "1" ]]; then
   HR_PID=$!
   trap 'kill "${HR_PID}" 2>/dev/null || true' EXIT
 
-  for _ in $(seq 1 25); do
+  echo "headroom: starting on :${HEADROOM_PORT}"
+  echo -n "Waitin for headroom proxy to start "
+  for _ in {1..25}; do
+    echo -n "."
     curl -fsS "http://127.0.0.1:${HEADROOM_PORT}/stats" >/dev/null 2>&1 && break
-    sleep 0.2
+    sleep 1
   done
+
   if ! curl -fsS "http://127.0.0.1:${HEADROOM_PORT}/stats" >/dev/null 2>&1; then
     echo "headroom: failed to come up — see /tmp/headroom.log" >&2
     tail -20 /tmp/headroom.log >&2 || true
