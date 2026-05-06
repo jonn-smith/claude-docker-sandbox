@@ -17,16 +17,23 @@ claude   # then /login
 # 3. Build the image
 cd docker && make && cd ..
 
-# 4. Make an env file for your first instance
-cp env.main.sh.example env.main.sh
-$EDITOR env.main.sh   # set CLAUDE_SANDBOX_PROJECTS_DIR + _CONTEXT_DIR
-
-# 5. Launch
-source env.main.sh
+# 4. Launch the default "main" shared-mode instance.
+#    env.example.sh defaults to in-repo workspace/ + context_reference/.
+source env.example.sh
 ./run_claude_docker.sh
 ```
 
-For multiple parallel instances or shared settings/skills/plugins across instances, see [Mounts](#mounts) and [Adopting shared mode](#adopting-shared-mode-safely-no-risk-to-existing-instances).
+For a second concurrent instance, copy the template and change the instance name:
+
+```bash
+cp env.example.sh env.B.sh
+$EDITOR env.B.sh   # set CLAUDE_SANDBOX_INSTANCE=B (and PROJECTS_DIR if different)
+source env.B.sh && ./run_claude_docker.sh
+```
+
+`env.*.sh` (other than `env.example.sh`) is gitignored — your per-instance files won't accidentally land in commits.
+
+For details on per-instance vs shared layouts and parallel launches, see [Mounts](#mounts).
 
 ## What's in the image
 

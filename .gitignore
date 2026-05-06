@@ -21,4 +21,8 @@ context_reference/*
 !context_reference/README.md
 
 SAVED_SNAPSHOTS
+
+# Per-instance env files are user-specific. Only the template is tracked.
 env.sh
+env.*.sh
+!env.example.sh
