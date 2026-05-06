@@ -43,6 +43,14 @@ RUN python3 -m venv /opt/claude-venv && \
       "headroom-ai[proxy]==0.6.1" && \
     chown -R claude:claude /opt/claude-venv
 
+# Make the bulk dirs writable by any UID. The runtime entrypoint remaps the
+# claude user to match the host invoker, but chown -R on hundreds of MB of
+# wheels and toolchain files takes 10+ seconds on every container start. With
+# world-writable perms baked at build time, the entrypoint can skip the chown
+# entirely. Container is single-user (claude) so loosening perms here doesn't
+# expand attack surface.
+RUN chmod -R a+rwX /opt/claude-venv /usr/local/cargo /usr/local/rustup
+
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH=/opt/claude-venv/bin:/usr/local/cargo/bin:/opt/java/openjdk/bin:$PATH
 

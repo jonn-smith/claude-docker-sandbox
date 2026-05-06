@@ -20,16 +20,11 @@ fi
 if [[ -n "$TARGET_UID" && "$TARGET_UID" != "$CUR_UID" ]]; then
   usermod -o -u "$TARGET_UID" claude
 
-  # Reclaim image-baked claude-owned dirs that have the OLD numeric uid.
-  # /home/claude is small. /opt/claude-venv has lots of files but they are
-  # world-readable; only chown if claude needs to write back (e.g., pip
-  # installs into the shared venv). Cheapest: chown only -home- and the
-  # writable cargo/rustup roots.
-  chown -R "$TARGET_UID":"${TARGET_GID:-$CUR_GID}" \
-    /home/claude \
-    /opt/claude-venv \
-    /usr/local/cargo \
-    /usr/local/rustup 2>/dev/null || true
+  # Only /home/claude needs ownership fixup — it has 644-mode dotfiles
+  # (.bashrc, .msmtprc) that need to be writable by claude. /opt/claude-venv,
+  # /usr/local/cargo, and /usr/local/rustup were chmod'd a+rwX at image
+  # build time, so any UID can read+write them without a costly chown -R.
+  chown -R "$TARGET_UID":"${TARGET_GID:-$CUR_GID}" /home/claude 2>/dev/null || true
 fi
 
 # Drop to claude and run the real entrypoint. exec-form so signals reach it.
