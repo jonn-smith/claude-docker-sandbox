@@ -6,7 +6,7 @@ FROM node:22-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git ca-certificates curl ripgrep vim sudo \
+      git ca-certificates curl ripgrep vim sudo gosu \
       python3 python3-pip python3-venv \
       build-essential
 
@@ -26,13 +26,11 @@ ENV CARGO_HOME=/usr/local/cargo \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
       sh -s -- -y --no-modify-path --default-toolchain stable
 
-# UID/GID match the host user that built the image so bind-mounted files
-# in /workspace and /home/claude/.claude have the right owner. Pass via
-# `make` (CLAUDE_UID / CLAUDE_GID) — it auto-fills from $(id -u) / $(id -g).
-ARG CLAUDE_UID=1015
-ARG CLAUDE_GID=1016
-RUN groupadd -g ${CLAUDE_GID} claude && \
-    useradd -m -u ${CLAUDE_UID} -g ${CLAUDE_GID} -s /bin/bash claude && \
+# Default UID/GID baked at build. The runtime entrypoint
+# (uid-fixup-entrypoint.sh) remaps these to match the host invoker via
+# HOST_UID / HOST_GID env vars, so a single image is portable across hosts.
+RUN groupadd -g 1015 claude && \
+    useradd -m -u 1015 -g 1015 -s /bin/bash claude && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
     chmod 440 /etc/sudoers.d/claude && \
     chown -R claude:claude /usr/local/cargo /usr/local/rustup
@@ -50,21 +48,24 @@ ENV JAVA_HOME=/opt/java/openjdk \
 
 ################################################################################
 
-USER claude
-
-# Setup Mail for claude user:
+# Files baked into the claude home dir. Container starts as root so the uid
+# fixup entrypoint can usermod the claude user before dropping privileges.
 COPY --chown=claude:claude msmtprc /home/claude/.msmtprc
 RUN chmod 600 /home/claude/.msmtprc
 
 COPY --chown=claude:claude start_dockerd.sh /home/claude/start_dockerd.sh
 RUN chmod +x /home/claude/start_dockerd.sh
 
-COPY --chown=claude:claude start_script.sh /home/claude/start_script.sh 
+COPY --chown=claude:claude start_script.sh /home/claude/start_script.sh
 RUN chmod +x /home/claude/start_script.sh
+
+COPY uid-fixup-entrypoint.sh /usr/local/bin/uid-fixup-entrypoint.sh
+RUN chmod +x /usr/local/bin/uid-fixup-entrypoint.sh
 
 # Set up some helpful aliases:
 RUN echo "alias ll='ls -l'" >> /home/claude/.bash_aliases
 
 WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/uid-fixup-entrypoint.sh"]
 CMD ["/home/claude/start_script.sh"]
 

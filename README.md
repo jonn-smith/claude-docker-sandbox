@@ -65,7 +65,7 @@ Base: `node:22-slim`.
 - **Rust** — stable toolchain (`rustc`, `cargo`, `rustup`) at `/usr/local/{cargo,rustup}`.
 - **Java 17** — Eclipse Temurin JDK at `/opt/java/openjdk`, `JAVA_HOME` exported.
 - **Dev tooling** — `git`, `curl`, `ripgrep`, `vim`, `build-essential`.
-- **Passwordless `sudo`** for the container's `claude` user. UID/GID default to the host invoker's `id -u` / `id -g` at build time so bind-mounted files end up owned by the right user on both sides. Override with `make CLAUDE_UID=... CLAUDE_GID=...` if you need a fixed pair.
+- **Passwordless `sudo`** for the container's `claude` user. UID/GID are remapped at container start to match the host invoker (`HOST_UID` / `HOST_GID` env vars supplied by `run_claude_docker.sh`), so a single image is shareable across hosts with different user IDs — no rebuild needed.
 
 Approximate image size: ~3 GB.
 

@@ -190,12 +190,13 @@ exec docker run --rm -it \
   --name "${CONTAINER_NAME}" \
   "${MOUNTS[@]}" \
   --runtime=sysbox-runc \
+  -e HOST_UID="$(id -u)" \
+  -e HOST_GID="$(id -g)" \
   -e HEADROOM="${HEADROOM:-0}" \
   -e HEADROOM_PORT="${HEADROOM_PORT:-8787}" \
   -e CLAUDE_NOTIFY_EMAIL="${CLAUDE_NOTIFY_EMAIL:-}" \
   -e CLAUDE_NOTIFY_FROM="${CLAUDE_NOTIFY_FROM:-claude-sandbox}" \
   -e CLAUDE_NOTIFY_HOSTNAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}" \
   -w /workspace \
-  --entrypoint /home/claude/start_script.sh \
   claude-sandbox:latest "$@"
 
