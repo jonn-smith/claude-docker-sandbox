@@ -21,6 +21,12 @@ DRY=0
 [[ "${1:-}" == "--dry-run" ]] && DRY=1
 
 # Items to share (everything else stays per-instance):
+#
+# projects/ and sessions/ deliberately NOT shared. Claude Code keys
+# projects/<encoded-cwd>/*.jsonl by container CWD. All instances bind-mount
+# to /workspace, so they collapse to the same projects/-workspace/ bucket;
+# sharing it makes `--continue` pick the newest JSONL across instances and
+# silently resume the wrong session. Keep per-instance.
 SHARED_ITEMS=(
   settings.json
   skills
@@ -28,8 +34,6 @@ SHARED_ITEMS=(
   hooks
   plans
   tasks
-  projects
-  sessions
 )
 
 shopt -s nullglob

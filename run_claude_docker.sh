@@ -132,7 +132,8 @@ if [[ "$USE_SHARED" == "1" ]]; then
       "$SANDBOX_HOME/.claude/file-history" \
       "$SANDBOX_HOME/.claude/backups" \
       "$SANDBOX_HOME/.claude/shell-snapshots" \
-      "$SANDBOX_HOME/.claude/session-env"
+      "$SANDBOX_HOME/.claude/session-env" \
+      "$SANDBOX_HOME/.claude/projects"
     touch "$SANDBOX_HOME/.claude/history.jsonl"
     [ -s "$SANDBOX_HOME/.claude.json" ] || echo '{}' > "$SANDBOX_HOME/.claude.json"
     echo "layout: shared (SHARED_HOME=${SHARED_HOME}, hot=${SANDBOX_HOME})"
@@ -169,6 +170,7 @@ if [[ "$USE_SHARED" == "1" ]]; then
       -v "${SANDBOX_HOME}/.claude/backups:/home/claude/.claude/backups"
       -v "${SANDBOX_HOME}/.claude/shell-snapshots:/home/claude/.claude/shell-snapshots"
       -v "${SANDBOX_HOME}/.claude/session-env:/home/claude/.claude/session-env"
+      -v "${SANDBOX_HOME}/.claude/projects:/home/claude/.claude/projects"
       -v "${SANDBOX_HOME}/.claude/history.jsonl:/home/claude/.claude/history.jsonl"
     )
 else
