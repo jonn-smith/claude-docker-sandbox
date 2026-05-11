@@ -4,20 +4,20 @@ set -euo pipefail
 # Here we set our directories and credentials so we can authenticate and have
 # a proper sandbox.  It's VERY important that we don't let these agents run
 # freely around our machine.
-if [[ ! -v CLAUDE_SANDBOX_PROJECTS_DIR ]] || [[ -z "$CLAUDE_SANDBOX_PROJECTS_DIR" ]]; then
-    echo "CRITICAL ERROR: CLAUDE_SANDBOX_PROJECTS_DIR is not set or is empty." >&2
+if [[ -z "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]] || [[ ! -d "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_PROJECTS_DIR is not set, is empty, or does not exist." >&2
     echo "                You must set this env var before starting the docker image." >&2
     exit 1
 fi
 
-if [[ ! -v CLAUDE_SANDBOX_CONTEXT_DIR ]] || [[ -z "$CLAUDE_SANDBOX_CONTEXT_DIR" ]]; then
-    echo "CRITICAL ERROR: CLAUDE_SANDBOX_CONTEXT_DIR is not set or is empty." >&2
+if [[ -z "${CLAUDE_SANDBOX_CONTEXT_DIR}" ]] || [[ ! -d "${CLAUDE_SANDBOX_CONTEXT_DIR}" ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_CONTEXT_DIR is not set, is empty, or does not exist." >&2
     echo "                You must set this env var before starting the docker image." >&2
     exit 1
 fi
 
-if [[ ! -v CLAUDE_SANDBOX_INSTANCE ]] || [[ -z "$CLAUDE_SANDBOX_INSTANCE" ]]; then
-    echo "CRITICAL ERROR: CLAUDE_SANDBOX_INSTANCE is not set or is empty." >&2
+if [[ -z "$CLAUDE_SANDBOX_INSTANCE" ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_INSTANCE is not set, does not exist, or is empty." >&2
     echo "                Each sandbox needs a unique instance ID so concurrent" >&2
     echo "                inner dockerds don't share /var/lib/docker." >&2
     exit 1
