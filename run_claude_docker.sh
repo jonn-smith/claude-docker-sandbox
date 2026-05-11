@@ -198,5 +198,5 @@ exec docker run --rm -it \
   -e CLAUDE_NOTIFY_FROM="${CLAUDE_NOTIFY_FROM:-claude-sandbox}" \
   -e CLAUDE_NOTIFY_HOSTNAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}" \
   -w /workspace \
-  claude-sandbox:latest "$@"
+  claude-sandbox:latest /home/claude/start_script.sh "$@"
 
