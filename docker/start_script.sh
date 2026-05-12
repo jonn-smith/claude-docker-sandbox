@@ -18,7 +18,7 @@ if [[ "${HEADROOM:-0}" == "1" ]]; then
     exit 1
   fi
   echo "headroom: starting on :${HEADROOM_PORT}"
-  headroom proxy --port "${HEADROOM_PORT}" >/tmp/headroom.log 2>&1 &
+  headroom proxy --no-telemetry --port "${HEADROOM_PORT}" >/tmp/headroom.log 2>&1 &
   HR_PID=$!
   trap 'kill "${HR_PID}" 2>/dev/null || true' EXIT
 
