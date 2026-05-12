@@ -51,6 +51,7 @@ PROMPT=$(cat "$PROMPT_FILE" 2>/dev/null || echo "(prompt unavailable)")
 rm -f "$PROMPT_FILE"
 
 PAYLOAD=$(cat)
+EVENT=$(echo "${PAYLOAD}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hook_event_name','Stop'))")
 
 if [ "$ELAPSED" -ge "$THRESHOLD" ]; then
 
@@ -88,7 +89,10 @@ except Exception as e:
 ")
 
   SUBJECT_SUMMARY=$(echo "$LAST_MESSAGE" | head -1 | cut -c1-60)
-  SUBJECT="[Claude] Task Done: ${SUBJECT_SUMMARY} - pwd:$(basename $PWD) (${ELAPSED}s)"
+  if [[ "${EVENT}" == "Stop" ]] ; then
+    EVENT="Task Done"
+  fi
+  SUBJECT="[Claude] ${EVENT}: ${SUBJECT_SUMMARY} - pwd:$(basename $PWD) (${ELAPSED}s)"
 
 curl smtp://${HOST_IP}:${SMTP_PORT} \
   --insecure \
