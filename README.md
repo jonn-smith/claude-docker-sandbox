@@ -117,6 +117,40 @@ Trust model: the proxy reads every byte of every request — that's how compress
 
 Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh` to make it sticky for that sandbox.
 
+## fiss-mcp (Terra MCP server)
+
+The image bundles [fiss-mcp](https://github.com/broadinstitute/fiss-mcp), an MCP server that lets Claude interact with [Terra](https://terra.bio) workspaces via FISS. On every container start, `start_script.sh` registers it in `~/.claude.json` so `claude` can call its tools.
+
+Authentication is **never baked into the image**. The host's gcloud config is bind-mounted into the container — you authenticate once on the host and every sandbox instance inherits the credentials:
+
+```bash
+# One-time host setup
+gcloud auth login                              # user creds
+gcloud auth application-default login          # ADC (Terra/FISS uses this)
+```
+
+`run_claude_docker.sh` mounts `~/.config/gcloud` into the container at the same path. Token refreshes flow back to the host because the mount is read/write.
+
+Toggle and write-access:
+
+```bash
+./run_claude_docker.sh                                   # fiss-mcp on, read-only (default)
+FISS_MCP=0 ./run_claude_docker.sh                        # off
+FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh           # on, write access enabled
+```
+
+Service-account key override (instead of user ADC):
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json ./run_claude_docker.sh
+```
+
+The launcher bind-mounts the key file into the container and forwards `GOOGLE_APPLICATION_CREDENTIALS` set to the container-side path. Pin a default project with `GOOGLE_CLOUD_PROJECT=...`.
+
+Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` in `env.<INSTANCE>.sh`.
+
+> **Warning**: `FISS_MCP_ALLOW_WRITES=1` lets the agent submit workflows, mutate workspace attributes, and otherwise spend money on your behalf. Leave it off unless you have a reason.
+
 ## Mounts
 
 Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
@@ -132,6 +166,8 @@ Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 | `$SANDBOX_HOME/.claude/` | `/home/claude/.claude` | All Claude state (settings, memory, sessions, plugins, caches). |
 | `$SANDBOX_HOME/.claude.json` | `/home/claude/.claude.json` | Onboarding state, project history. |
 | `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | OAuth token (RW; refreshes land on host). |
+| `~/.config/gcloud/` (if present) | `/home/claude/.config/gcloud` | gcloud user/ADC creds for fiss-mcp / Terra. Skipped when `FISS_MCP=0` or dir missing. |
+| `$GOOGLE_APPLICATION_CREDENTIALS` (if set) | `/home/claude/.config/gcloud-sa-key.json` | Optional service-account key (read-only). |
 
 ### Shared mode (opt-in)
 
@@ -147,6 +183,8 @@ Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 | `$SANDBOX_HOME/.claude/session-env` | `/home/claude/.claude/session-env` | per-instance |
 | `$SANDBOX_HOME/.claude/history.jsonl` | `/home/claude/.claude/history.jsonl` | per-instance |
 | `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | host-shared |
+| `~/.config/gcloud/` (if present) | `/home/claude/.config/gcloud` | host-shared — gcloud creds for fiss-mcp / Terra |
+| `$GOOGLE_APPLICATION_CREDENTIALS` (if set) | `/home/claude/.config/gcloud-sa-key.json` | host-shared — optional SA key (ro) |
 
 `$SHARED_HOME` defaults to `claude-sandbox-shared/` next to `run_claude_docker.sh` (override: `CLAUDE_SANDBOX_SHARED`). `$SANDBOX_HOME` defaults to `claude-sandbox-persistent-state-${CLAUDE_SANDBOX_INSTANCE}/` (override: `CLAUDE_SANDBOX_HOME`). Both must be absolute paths.
 

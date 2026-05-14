@@ -185,6 +185,25 @@ MOUNTS+=(
   -v "${DIND_VOLUME}:/var/lib/docker"
 )
 
+# fiss-mcp / Terra auth pass-through. gcloud config dir (rw — adc refreshes
+# need to write) plus optional service-account key file. Both optional; if
+# the host paths don't exist we skip the mount so launches without GCP
+# context still work.
+FISS_MCP_ENABLED="${FISS_MCP:-1}"
+if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
+  if [[ -d "${HOME}/.config/gcloud" ]]; then
+    MOUNTS+=( -v "${HOME}/.config/gcloud:/home/claude/.config/gcloud" )
+  fi
+  # If GOOGLE_APPLICATION_CREDENTIALS points at a file on the host, mount it
+  # in at a fixed container path so the env var (forwarded below) resolves.
+  GAC_HOST="${GOOGLE_APPLICATION_CREDENTIALS:-}"
+  GAC_CONTAINER=""
+  if [[ -n "$GAC_HOST" && -f "$GAC_HOST" ]]; then
+    GAC_CONTAINER="/home/claude/.config/gcloud-sa-key.json"
+    MOUNTS+=( -v "${GAC_HOST}:${GAC_CONTAINER}:ro" )
+  fi
+fi
+
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
@@ -199,6 +218,11 @@ exec docker run --rm -it \
   -e CLAUDE_NOTIFY_EMAIL="${CLAUDE_NOTIFY_EMAIL:-}" \
   -e CLAUDE_NOTIFY_FROM="${CLAUDE_NOTIFY_FROM:-claude-sandbox}" \
   -e CLAUDE_NOTIFY_HOSTNAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}" \
+  -e FISS_MCP="${FISS_MCP_ENABLED}" \
+  -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
+  -e GOOGLE_APPLICATION_CREDENTIALS="${GAC_CONTAINER:-}" \
+  -e GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-}" \
+  -e CLOUDSDK_CORE_PROJECT="${CLOUDSDK_CORE_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}" \
   -w /workspace \
   claude-sandbox:latest /home/claude/start_script.sh "$@"
 

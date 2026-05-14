@@ -42,5 +42,32 @@ else
   echo "headroom: OFF"
 fi
 
+# fiss-mcp (Terra MCP). FISS_MCP=1 (default) registers the server in
+# ~/.claude.json so claude can find it; FISS_MCP=0 removes the entry.
+# Mutating .claude.json here is race-free because claude has not started yet.
+CLAUDE_JSON="${HOME}/.claude.json"
+[ -s "$CLAUDE_JSON" ] || echo '{}' > "$CLAUDE_JSON"
+
+if [[ "${FISS_MCP:-1}" == "1" ]]; then
+  if [[ ! -d "${HOME}/.config/gcloud" && -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    echo "fiss-mcp: WARNING — no gcloud config mounted and GOOGLE_APPLICATION_CREDENTIALS unset." >&2
+    echo "          MCP server will register but Terra calls will fail until auth is present." >&2
+    echo "          Run 'gcloud auth login && gcloud auth application-default login' on the host." >&2
+  fi
+  jq --arg cmd /usr/local/bin/fiss-mcp-server \
+     --arg allow "${FISS_MCP_ALLOW_WRITES:-0}" \
+     '.mcpServers["fiss-mcp"] = {
+        type: "stdio",
+        command: $cmd,
+        args: [],
+        env: { FISS_MCP_ALLOW_WRITES: $allow }
+      }' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+  echo "fiss-mcp: ON  allow_writes=${FISS_MCP_ALLOW_WRITES:-0}"
+else
+  jq 'if .mcpServers? then .mcpServers |= del(.["fiss-mcp"]) else . end' \
+     "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+  echo "fiss-mcp: OFF"
+fi
+
 # Run claude:
 claude "$@"
