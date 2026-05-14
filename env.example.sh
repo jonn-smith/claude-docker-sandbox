@@ -21,13 +21,14 @@ export CLAUDE_SANDBOX_USE_SHARED=1
 export HEADROOM=1
 
 # fiss-mcp (Terra MCP server). 1 = registered with claude on launch (default),
-# 0 = removed. Auth comes from the host: the launcher bind-mounts
+# 0 = removed. The server is read-only by design — write access is never
+# enabled regardless of env, to keep the agent from submitting workflows or
+# mutating workspaces. Auth comes from the host: the launcher bind-mounts
 # ~/.config/gcloud into the container (set up via `gcloud auth login` +
 # `gcloud auth application-default login` on the host once). Set
 # GOOGLE_APPLICATION_CREDENTIALS to a key-file path here to override with a
 # service account, or GOOGLE_CLOUD_PROJECT to pin the project.
 export FISS_MCP=1
-export FISS_MCP_ALLOW_WRITES=0
 #export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json
 #export GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 

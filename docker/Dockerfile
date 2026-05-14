@@ -55,8 +55,9 @@ RUN python3 -m venv /opt/claude-venv && \
     chown -R claude:claude /opt/claude-venv
 
 # fiss-mcp (Terra MCP server). Isolated venv so its deps (firecloud, fastmcp,
-# google-cloud-*) can't collide with claude-venv. Wrapper script at
-# /usr/local/bin/fiss-mcp-server picks up FISS_MCP_ALLOW_WRITES at run time.
+# google-cloud-*) can't collide with claude-venv. Wrapper at
+# /usr/local/bin/fiss-mcp-server hard-codes read-only invocation
+# (no --allow-writes), by policy.
 RUN git clone --depth=1 https://github.com/broadinstitute/fiss-mcp /opt/fiss-mcp && \
     python3 -m venv /opt/fiss-mcp-venv && \
     /opt/fiss-mcp-venv/bin/pip install --no-cache-dir --upgrade pip "setuptools<80" && \

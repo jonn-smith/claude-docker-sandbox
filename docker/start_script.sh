@@ -55,14 +55,13 @@ if [[ "${FISS_MCP:-1}" == "1" ]]; then
     echo "          Run 'gcloud auth login && gcloud auth application-default login' on the host." >&2
   fi
   jq --arg cmd /usr/local/bin/fiss-mcp-server \
-     --arg allow "${FISS_MCP_ALLOW_WRITES:-0}" \
      '.mcpServers["fiss-mcp"] = {
         type: "stdio",
         command: $cmd,
         args: [],
-        env: { FISS_MCP_ALLOW_WRITES: $allow }
+        env: {}
       }' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
-  echo "fiss-mcp: ON  allow_writes=${FISS_MCP_ALLOW_WRITES:-0}"
+  echo "fiss-mcp: ON (read-only)"
 else
   jq 'if .mcpServers? then .mcpServers |= del(.["fiss-mcp"]) else . end' \
      "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"

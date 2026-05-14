@@ -10,13 +10,9 @@ Look, this uses a heavy docker image, and it's suited to my (Jonn's) needs.  Nev
 Beyond the normal setup and build features, this sandbox has:
 - Automated emails for prompts that take longer than <CONFIGURABLE> seconds to complete (default 120)
 - A built-in, pre-configured [headroom](https://github.com/chopratejas/headroom) installation (runtime-disable-able)
-- A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra (uses host machine credentials; configurable; runtime-disable-able).
+- A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra (uses host machine credentials; runtime-disable-able). Hard-wired read-only — `--allow-writes` is never passed, so the agent cannot submit workflows or mutate workspace state. Enabling writes requires editing `docker/fiss-mcp-server.sh` and rebuilding.
 
 I've tried to include everything I need for my typical work.
-
-```
-NOTE: This Terra / fiss-mcp server business is potentially dangerous if claude decides to get drunk, start it with `--allow-writes`, and run a bunch of workflows or something.
-```
 
 ## Quick start (fresh clone)
 
@@ -131,13 +127,14 @@ gcloud auth application-default login          # ADC (Terra/FISS uses this)
 
 `run_claude_docker.sh` mounts `~/.config/gcloud` into the container at the same path. Token refreshes flow back to the host because the mount is read/write.
 
-Toggle and write-access:
+Toggle:
 
 ```bash
-./run_claude_docker.sh                                   # fiss-mcp on, read-only (default)
-FISS_MCP=0 ./run_claude_docker.sh                        # off
-FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh           # on, write access enabled
+./run_claude_docker.sh             # fiss-mcp on, read-only (default)
+FISS_MCP=0 ./run_claude_docker.sh  # off
 ```
+
+**Read-only by policy.** The wrapper at `/usr/local/bin/fiss-mcp-server` invokes `fastmcp run` without `--allow-writes`, and there is no env knob to flip it on. To allow writes you would have to edit `docker/fiss-mcp-server.sh` and rebuild — a deliberate friction so the agent cannot submit workflows or mutate workspace state in a normal sandbox.
 
 Service-account key override (instead of user ADC):
 
@@ -147,9 +144,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json ./run_claude_docker.sh
 
 The launcher bind-mounts the key file into the container and forwards `GOOGLE_APPLICATION_CREDENTIALS` set to the container-side path. Pin a default project with `GOOGLE_CLOUD_PROJECT=...`.
 
-Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` in `env.<INSTANCE>.sh`.
-
-> **Warning**: `FISS_MCP_ALLOW_WRITES=1` lets the agent submit workflows, mutate workspace attributes, and otherwise spend money on your behalf. Leave it off unless you have a reason.
+Per-instance default: set `FISS_MCP` in `env.<INSTANCE>.sh`.
 
 ## Mounts
 
