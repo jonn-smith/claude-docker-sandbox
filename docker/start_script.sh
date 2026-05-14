@@ -55,13 +55,35 @@ if [[ "${FISS_MCP:-1}" == "1" ]]; then
     echo "          Run 'gcloud auth login && gcloud auth application-default login' on the host." >&2
   fi
   jq --arg cmd /usr/local/bin/fiss-mcp-server \
+     --arg allow "${FISS_MCP_ALLOW_WRITES:-0}" \
      '.mcpServers["fiss-mcp"] = {
         type: "stdio",
         command: $cmd,
         args: [],
-        env: {}
+        env: { FISS_MCP_ALLOW_WRITES: $allow }
       }' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
-  echo "fiss-mcp: ON (read-only)"
+
+  if [[ "${FISS_MCP_ALLOW_WRITES:-0}" == "1" ]]; then
+    # Second banner inside the container so the warning shows up even when
+    # the host launcher's output has scrolled off, or when somebody execs
+    # into a running container and restarts claude.
+    RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
+    echo
+    echo "${RED}"
+    if command -v figlet >/dev/null 2>&1; then
+      figlet -w 120 "FISS WRITE MODE"
+    else
+      echo "##############################################################"
+      echo "#  F I S S - M C P   W R I T E   M O D E   E N A B L E D     #"
+      echo "##############################################################"
+    fi
+    echo "${YEL}fiss-mcp registered with --allow-writes.${RST}"
+    echo "${YEL}Agent can submit workflows and mutate workspace state.${RST}"
+    echo "${RST}"
+    echo "fiss-mcp: ON  (WRITE MODE — agent has Terra write access)"
+  else
+    echo "fiss-mcp: ON  (read-only)"
+  fi
 else
   jq 'if .mcpServers? then .mcpServers |= del(.["fiss-mcp"]) else . end' \
      "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"

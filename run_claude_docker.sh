@@ -204,6 +204,29 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   fi
 fi
 
+# Loud warning when fiss-mcp is launching with write access. Writes can
+# submit workflows, mutate workspace attributes, and spend real money. The
+# figlet banner is intentionally hard to miss; the in-container start_script
+# prints a matching banner so the warning is unavoidable on both sides.
+if [[ "${FISS_MCP_ENABLED}" == "1" && "${FISS_MCP_ALLOW_WRITES:-0}" == "1" ]]; then
+  RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
+  echo
+  echo "${RED}"
+  if command -v figlet >/dev/null 2>&1; then
+    figlet -w 120 "FISS WRITE MODE"
+  else
+    echo "##############################################################"
+    echo "#  F I S S - M C P   W R I T E   M O D E   E N A B L E D     #"
+    echo "##############################################################"
+  fi
+  echo "${YEL}fiss-mcp is launching with --allow-writes.${RST}"
+  echo "${YEL}The agent CAN submit workflows, mutate workspace attributes,${RST}"
+  echo "${YEL}and otherwise spend money on your Terra/GCP account.${RST}"
+  echo "${YEL}Unset FISS_MCP_ALLOW_WRITES to disable.${RST}"
+  echo
+  sleep 2
+fi
+
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
@@ -219,6 +242,7 @@ exec docker run --rm -it \
   -e CLAUDE_NOTIFY_FROM="${CLAUDE_NOTIFY_FROM:-claude-sandbox}" \
   -e CLAUDE_NOTIFY_HOSTNAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}" \
   -e FISS_MCP="${FISS_MCP_ENABLED}" \
+  -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
   -e GOOGLE_APPLICATION_CREDENTIALS="${GAC_CONTAINER:-}" \
   -e GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-}" \
   -e CLOUDSDK_CORE_PROJECT="${CLOUDSDK_CORE_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}" \
