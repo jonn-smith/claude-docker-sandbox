@@ -67,8 +67,6 @@ postconf -h mynetworks
 
 ################################################################################
 
-################################################################################
-
 # fiss-mcp (Terra MCP server) lives on the host, not in the container, so it
 # needs a host-side venv. Done here once at setup time — the run script will
 # refuse to launch with FISS_MCP=1 until this completes.
