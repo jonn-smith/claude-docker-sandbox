@@ -20,25 +20,33 @@ export CLAUDE_SANDBOX_USE_SHARED=1
 # Optional: turn the Headroom token-compression proxy on for this instance.
 export HEADROOM=1
 
-# fiss-mcp (Terra MCP server). FISS_MCP=1 (default) registers the server in
-# claude's MCP config on launch; FISS_MCP=0 removes it.
+# fiss-mcp (Terra MCP server). FISS_MCP=1 (default) makes the launcher spawn
+# a host-side fiss-mcp server before docker run, then registers it in the
+# container's MCP config as an HTTP endpoint at host.docker.internal:<PORT>.
+# The server is killed automatically when this launch exits (trap on EXIT).
+# FISS_MCP=0 skips spawn + registration entirely.
 #
-# FISS_MCP_ALLOW_WRITES=1 starts the server with --allow-writes — the agent
-# can then submit workflows, mutate workspace attributes, and spend money
-# on your Terra/GCP account. Leave at 0 unless you know exactly what you
-# want. Write mode is intentionally loud: a red figlet banner prints on
+# Why host-side: the container has NO gcloud / gsutil / google-cloud-* libs
+# and NO ~/.config/gcloud mount. The only reachable path from inside the
+# sandbox to Terra/GCP is the MCP tools — and the server is read-only by
+# default, so the agent cannot mutate state from inside the container.
+#
+# Auth: the host server inherits the host's gcloud creds. On a workstation,
+# run `gcloud auth login` + `gcloud auth application-default login` once.
+# On a GCE VM the default service account is picked up via metadata server.
+#
+# FISS_MCP_ALLOW_WRITES=1 starts the host server with write mode enabled —
+# the agent can then submit workflows, mutate workspace attributes, and
+# spend money on your Terra/GCP account. Leave at 0 unless you know exactly
+# what you want. Write mode is intentionally loud: a red banner prints on
 # the host launcher AND inside the container at startup so it is impossible
 # to miss.
 #
-# Auth comes from the host: the launcher bind-mounts ~/.config/gcloud into
-# the container (set up via `gcloud auth login` + `gcloud auth
-# application-default login` on the host once). Set
-# GOOGLE_APPLICATION_CREDENTIALS to a key-file path here to override with a
-# service account, or GOOGLE_CLOUD_PROJECT to pin the project.
+# FISS_MCP_PORT overrides the auto-computed host port (default: hashed from
+# CLAUDE_SANDBOX_INSTANCE into 39000-39999).
 export FISS_MCP=1
 export FISS_MCP_ALLOW_WRITES=0
-#export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json
-#export GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+#export FISS_MCP_PORT=39042
 
 # Email notifications when a Claude task takes longer than the threshold in
 # claude-sandbox-shared/.claude/hooks/notify-if-long.sh. Leave

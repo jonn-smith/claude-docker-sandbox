@@ -6,23 +6,13 @@ FROM node:22-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git ca-certificates curl gnupg ripgrep vim sudo gosu jq \
+      git ca-certificates curl ripgrep vim sudo gosu jq \
       openssh-client \
       python3 python3-pip python3-venv \
       build-essential
 
 # For email notifications, docker-in-a-docker and other utils:
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils shellcheck docker.io procps
-
-# Google Cloud SDK — needed for fiss-mcp / Terra auth. User authenticates on
-# the host (gcloud auth login + gcloud auth application-default login); the
-# launcher bind-mounts ~/.config/gcloud into the container.
-RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-      | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-      > /etc/apt/sources.list.d/google-cloud-sdk.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends google-cloud-cli
 
 # Clean up APT stuff:
 RUN rm -rf /var/lib/apt/lists/*
@@ -54,20 +44,12 @@ RUN python3 -m venv /opt/claude-venv && \
       "headroom-ai[proxy]==0.6.1" && \
     chown -R claude:claude /opt/claude-venv
 
-# fiss-mcp (Terra MCP server). Isolated venv so its deps (firecloud, fastmcp,
-# google-cloud-*) can't collide with claude-venv. Wrapper at
-# /usr/local/bin/fiss-mcp-server picks up FISS_MCP_ALLOW_WRITES at run time.
-# Read-only by default; write mode triggers loud (pre-rendered, no figlet
-# dep) banners on both the host launcher and the in-container start script.
-RUN git clone --depth=1 https://github.com/broadinstitute/fiss-mcp /opt/fiss-mcp && \
-    python3 -m venv /opt/fiss-mcp-venv && \
-    /opt/fiss-mcp-venv/bin/pip install --no-cache-dir --upgrade pip "setuptools<80" && \
-    /opt/fiss-mcp-venv/bin/pip install --no-cache-dir --no-build-isolation \
-      -r /opt/fiss-mcp/requirements.txt && \
-    /opt/fiss-mcp-venv/bin/pip install --no-cache-dir --no-deps -e /opt/fiss-mcp
-
-COPY fiss-mcp-server.sh /usr/local/bin/fiss-mcp-server
-RUN chmod +x /usr/local/bin/fiss-mcp-server
+# fiss-mcp lives on the HOST, not in the container. The launcher
+# (run_claude_docker.sh) spawns it before docker run, passes the URL in via
+# FISS_MCP_URL, and traps SIGEXIT to kill it after the container exits.
+# This keeps gcloud, gsutil, google-cloud-* libs, and ~/.config/gcloud out
+# of the container entirely, so the only reachable path from inside the
+# sandbox to Terra/GCP is the MCP tools — read-only by default.
 
 # Make the bulk dirs writable by any UID. The runtime entrypoint remaps the
 # claude user to match the host invoker, but chown -R on hundreds of MB of
@@ -75,7 +57,7 @@ RUN chmod +x /usr/local/bin/fiss-mcp-server
 # world-writable perms baked at build time, the entrypoint can skip the chown
 # entirely. Container is single-user (claude) so loosening perms here doesn't
 # expand attack surface.
-RUN chmod -R a+rwX /opt/claude-venv /opt/fiss-mcp /opt/fiss-mcp-venv /usr/local/cargo /usr/local/rustup
+RUN chmod -R a+rwX /opt/claude-venv /usr/local/cargo /usr/local/rustup
 
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH=/opt/claude-venv/bin:/usr/local/cargo/bin:/opt/java/openjdk/bin:$PATH

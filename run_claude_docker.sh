@@ -195,22 +195,76 @@ MOUNTS+=(
   -v "${DIND_VOLUME}:/var/lib/docker"
 )
 
-# fiss-mcp / Terra auth pass-through. gcloud config dir (rw — adc refreshes
-# need to write) plus optional service-account key file. Both optional; if
-# the host paths don't exist we skip the mount so launches without GCP
-# context still work.
+# fiss-mcp (Terra MCP server) lifecycle. The server runs on the HOST (not in
+# the container) over HTTP. The container only sees a URL; it has no gcloud,
+# gsutil, ~/.config/gcloud, or google-cloud-* libs — the only path to GCP
+# from inside the sandbox is via the MCP tools exposed by this server, which
+# is read-only unless FISS_MCP_ALLOW_WRITES=1. We install/refresh the host
+# venv on every launch (idempotent), spawn the server, wait for it to bind,
+# and register a trap so the server dies when this script exits.
 FISS_MCP_ENABLED="${FISS_MCP:-1}"
-if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
-  if [[ -d "${HOME}/.config/gcloud" ]]; then
-    MOUNTS+=( -v "${HOME}/.config/gcloud:/home/claude/.config/gcloud" )
+FISS_MCP_URL_FOR_CONTAINER=""
+HOST_FISS_PID=""
+HOST_FISS_LOG=""
+
+cleanup_host_fiss() {
+  if [[ -n "${HOST_FISS_PID}" ]] && kill -0 "${HOST_FISS_PID}" 2>/dev/null; then
+    echo "host_fiss_mcp: stopping (pid=${HOST_FISS_PID})"
+    kill "${HOST_FISS_PID}" 2>/dev/null || true
+    wait "${HOST_FISS_PID}" 2>/dev/null || true
   fi
-  # If GOOGLE_APPLICATION_CREDENTIALS points at a file on the host, mount it
-  # in at a fixed container path so the env var (forwarded below) resolves.
-  GAC_HOST="${GOOGLE_APPLICATION_CREDENTIALS:-}"
-  GAC_CONTAINER=""
-  if [[ -n "$GAC_HOST" && -f "$GAC_HOST" ]]; then
-    GAC_CONTAINER="/home/claude/.config/gcloud-sa-key.json"
-    MOUNTS+=( -v "${GAC_HOST}:${GAC_CONTAINER}:ro" )
+}
+trap cleanup_host_fiss EXIT INT TERM
+
+if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
+  HOST_FISS_INSTALL="${SCRIPT_DIR}/host_fiss_mcp/install.sh"
+  if [[ ! -f "${HOST_FISS_INSTALL}" ]]; then
+    echo "fiss-mcp: ${HOST_FISS_INSTALL} not found; disabling fiss-mcp for this launch" >&2
+    FISS_MCP_ENABLED=0
+  else
+    bash "${HOST_FISS_INSTALL}"
+    INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp"
+
+    # Per-instance port so concurrent sandboxes don't collide. Hash the
+    # instance name into 39000-39999. Override with FISS_MCP_PORT.
+    PORT_OFFSET=$(printf '%s' "${CLAUDE_SANDBOX_INSTANCE}" | cksum | awk '{print $1 % 1000}')
+    HOST_FISS_PORT="${FISS_MCP_PORT:-$((39000 + PORT_OFFSET))}"
+    HOST_FISS_PATH="/mcp/"
+
+    if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
+      echo "fiss-mcp: 127.0.0.1:${HOST_FISS_PORT} already in use." >&2
+      echo "          Set FISS_MCP_PORT to a free port or stop the conflicting process." >&2
+      exit 1
+    fi
+
+    HOST_FISS_LOG="${SANDBOX_HOME}/.claude/host_fiss_mcp.log"
+    mkdir -p "$(dirname "${HOST_FISS_LOG}")"
+
+    FISS_MCP_HOST="127.0.0.1" \
+    FISS_MCP_PORT="${HOST_FISS_PORT}" \
+    FISS_MCP_PATH="${HOST_FISS_PATH}" \
+    FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
+    nohup "${INSTALL_ROOT}/venv/bin/python" "${INSTALL_ROOT}/run-server.py" \
+      > "${HOST_FISS_LOG}" 2>&1 &
+    HOST_FISS_PID=$!
+
+    echo -n "fiss-mcp: waiting for host server on 127.0.0.1:${HOST_FISS_PORT} "
+    READY=0
+    for _ in $(seq 1 30); do
+      if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
+        READY=1; echo " OK"; break
+      fi
+      echo -n "."; sleep 1
+    done
+    if [[ "$READY" != "1" ]]; then
+      echo " FAILED"
+      echo "fiss-mcp: server did not come up — last 20 lines of ${HOST_FISS_LOG}:" >&2
+      tail -20 "${HOST_FISS_LOG}" >&2 || true
+      exit 1
+    fi
+
+    FISS_MCP_URL_FOR_CONTAINER="http://host.docker.internal:${HOST_FISS_PORT}${HOST_FISS_PATH}"
+    echo "fiss-mcp: host server pid=${HOST_FISS_PID} url=${FISS_MCP_URL_FOR_CONTAINER}"
   fi
 fi
 
@@ -244,9 +298,12 @@ fi
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
-exec docker run --rm -it \
+# Note: not using `exec` so the EXIT trap can still fire to clean up the
+# host fiss-mcp process after the container exits.
+docker run --rm -it \
   --name "${CONTAINER_NAME}" \
   "${MOUNTS[@]}" \
+  --add-host=host.docker.internal:host-gateway \
   --runtime=sysbox-runc \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
@@ -257,9 +314,7 @@ exec docker run --rm -it \
   -e CLAUDE_NOTIFY_HOSTNAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}" \
   -e FISS_MCP="${FISS_MCP_ENABLED}" \
   -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
-  -e GOOGLE_APPLICATION_CREDENTIALS="${GAC_CONTAINER:-}" \
-  -e GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-}" \
-  -e CLOUDSDK_CORE_PROJECT="${CLOUDSDK_CORE_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}" \
+  -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
   -w /workspace \
   claude-sandbox:latest /home/claude/start_script.sh "$@"
 

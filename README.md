@@ -10,7 +10,7 @@ Look, this uses a heavy docker image, and it's suited to my (Jonn's) needs.  Nev
 Beyond the normal setup and build features, this sandbox has:
 - Automated emails for prompts that take longer than <CONFIGURABLE> seconds to complete (default 120)
 - A built-in, pre-configured [headroom](https://github.com/chopratejas/headroom) installation (runtime-disable-able)
-- A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra (uses host machine credentials; runtime-disable-able). Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
+- A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra. The server runs on the **host**, not inside the container, so the sandbox has no `gcloud` / `gsutil` / `google-cloud-*` libs and no `~/.config/gcloud` mount — the only path from inside the sandbox to Terra/GCP is the MCP tools the server exposes. Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
 
 I've tried to include everything I need for my typical work.
 
@@ -113,39 +113,40 @@ Trust model: the proxy reads every byte of every request — that's how compress
 
 Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh` to make it sticky for that sandbox.
 
-## fiss-mcp (Terra MCP server)
+## fiss-mcp (Terra MCP server) — runs on the host
 
-The image bundles [fiss-mcp](https://github.com/broadinstitute/fiss-mcp), an MCP server that lets Claude interact with [Terra](https://terra.bio) workspaces via FISS. On every container start, `start_script.sh` registers it in `~/.claude.json` so `claude` can call its tools.
+The launcher spawns [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) as a host-side HTTP MCP server before starting the container, then advertises its URL to the container via `FISS_MCP_URL`. The in-container `start_script.sh` registers an HTTP MCP entry in `~/.claude.json` pointing at `http://host.docker.internal:<PORT>/mcp/`. When `run_claude_docker.sh` exits (or you ^C it), a bash `EXIT` trap kills the host process.
 
-Authentication is **never baked into the image**. The host's gcloud config is bind-mounted into the container — you authenticate once on the host and every sandbox instance inherits the credentials:
+**Why host-side**: the container never sees `gcloud`, `gsutil`, `google-cloud-*` libs, `~/.config/gcloud`, or any service-account key file. The agent's only reachable path to Terra/GCP is the MCP tools the host server exposes — which are read-only by default. There is no shell-level bypass.
+
+**Install**: `run_claude_docker.sh` runs `host_fiss_mcp/install.sh` on every launch (idempotent). The first run clones fiss-mcp into `${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp/` and creates a venv there. Subsequent runs skip the work via a marker file. Requires Python 3.10+ on the host.
+
+**Auth**: the host server inherits the host's gcloud credentials directly — no mount, no env var forwarding. Set up once on the host:
 
 ```bash
-# One-time host setup
-gcloud auth login                              # user creds
-gcloud auth application-default login          # ADC (Terra/FISS uses this)
+gcloud auth login                              # user creds (the Terra-registered identity)
+gcloud auth application-default login          # ADC (FISS uses this)
 ```
 
-`run_claude_docker.sh` mounts `~/.config/gcloud` into the container at the same path. Token refreshes flow back to the host because the mount is read/write.
+On a GCE VM with a default service account, the metadata server is picked up automatically — but Terra is user-identity-based, so a workspace-registered Google account is generally required.
 
-Toggle and write-access:
+**Toggle and write-access:**
 
 ```bash
 ./run_claude_docker.sh                            # fiss-mcp on, read-only (default)
-FISS_MCP=0 ./run_claude_docker.sh                 # off
+FISS_MCP=0 ./run_claude_docker.sh                 # off (no spawn, no registration)
 FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh    # on, WRITE MODE (loud banner)
 ```
 
 > **Warning**: `FISS_MCP_ALLOW_WRITES=1` lets the agent submit workflows, mutate workspace attributes, and spend money on your Terra/GCP account. Both `run_claude_docker.sh` and `start_script.sh` print a red ASCII-art banner (pre-rendered figlet output, no host or image dependency) when write mode is on, on the host and inside the container respectively, so the warning shows up no matter where you're reading the terminal.
 
-Service-account key override (instead of user ADC):
+**Ports**: each instance gets a deterministic port in `39000-39999` hashed from `CLAUDE_SANDBOX_INSTANCE`, so concurrent sandboxes don't collide. Override with `FISS_MCP_PORT=<port>` if the auto-pick clashes with something else on the host.
 
-```bash
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json ./run_claude_docker.sh
-```
+**Container connectivity**: `run_claude_docker.sh` adds `--add-host=host.docker.internal:host-gateway` so the container can reach the host on a stable name. Works with `sysbox-runc` because it's a Docker daemon flag, not a runtime concern.
 
-The launcher bind-mounts the key file into the container and forwards `GOOGLE_APPLICATION_CREDENTIALS` set to the container-side path. Pin a default project with `GOOGLE_CLOUD_PROJECT=...`.
+**Lifecycle**: trap on `EXIT INT TERM` kills the host fastmcp process. If the launcher is `kill -9`'d, the orphan can be reaped with `pkill -f run-server.py`. The MCP log lives at `${SANDBOX_HOME}/.claude/host_fiss_mcp.log`.
 
-Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` in `env.<INSTANCE>.sh`.
+Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` / `FISS_MCP_PORT` in `env.<INSTANCE>.sh`.
 
 ## Mounts
 
@@ -162,8 +163,8 @@ Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 | `$SANDBOX_HOME/.claude/` | `/home/claude/.claude` | All Claude state (settings, memory, sessions, plugins, caches). |
 | `$SANDBOX_HOME/.claude.json` | `/home/claude/.claude.json` | Onboarding state, project history. |
 | `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | OAuth token (RW; refreshes land on host). |
-| `~/.config/gcloud/` (if present) | `/home/claude/.config/gcloud` | gcloud user/ADC creds for fiss-mcp / Terra. Skipped when `FISS_MCP=0` or dir missing. |
-| `$GOOGLE_APPLICATION_CREDENTIALS` (if set) | `/home/claude/.config/gcloud-sa-key.json` | Optional service-account key (read-only). |
+
+(fiss-mcp / Terra creds are **not** mounted — the MCP server runs on the host. See [fiss-mcp section](#fiss-mcp-terra-mcp-server--runs-on-the-host).)
 
 ### Shared mode (opt-in)
 
@@ -179,8 +180,6 @@ Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 | `$SANDBOX_HOME/.claude/session-env` | `/home/claude/.claude/session-env` | per-instance |
 | `$SANDBOX_HOME/.claude/history.jsonl` | `/home/claude/.claude/history.jsonl` | per-instance |
 | `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | host-shared |
-| `~/.config/gcloud/` (if present) | `/home/claude/.config/gcloud` | host-shared — gcloud creds for fiss-mcp / Terra |
-| `$GOOGLE_APPLICATION_CREDENTIALS` (if set) | `/home/claude/.config/gcloud-sa-key.json` | host-shared — optional SA key (ro) |
 
 `$SHARED_HOME` defaults to `claude-sandbox-shared/` next to `run_claude_docker.sh` (override: `CLAUDE_SANDBOX_SHARED`). `$SANDBOX_HOME` defaults to `claude-sandbox-persistent-state-${CLAUDE_SANDBOX_INSTANCE}/` (override: `CLAUDE_SANDBOX_HOME`). Both must be absolute paths.
 
