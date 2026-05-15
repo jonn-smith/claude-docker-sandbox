@@ -15,6 +15,12 @@ SRC_DIR="${INSTALL_ROOT}/fiss-mcp"
 VENV_DIR="${INSTALL_ROOT}/venv"
 REPO_URL="https://github.com/broadinstitute/fiss-mcp.git"
 
+# Pinned release. Bump together with anything that depends on new fiss-mcp
+# features. The marker file below keys off this string, so any change here
+# triggers a full reinstall on the next setup_host.sh run.
+FISS_MCP_REF="1.0.2"
+FISS_MCP_REF_COMMIT="2164ffd4a28350f3cf1f08fd075bd90943601410"
+
 # Python 3.10+ check (fiss-mcp requires >=3.10).
 PY="${PYTHON:-python3}"
 if ! command -v "$PY" >/dev/null 2>&1; then
@@ -29,19 +35,35 @@ if [[ "$PY_MAJ" -lt 3 ]] || { [[ "$PY_MAJ" -eq 3 ]] && [[ "$PY_MIN" -lt 10 ]]; }
 fi
 
 if [[ ! -d "${SRC_DIR}/.git" ]]; then
-  echo "host_fiss_mcp: cloning fiss-mcp into ${SRC_DIR}"
-  git clone --depth=1 "${REPO_URL}" "${SRC_DIR}"
+  echo "host_fiss_mcp: cloning fiss-mcp into ${SRC_DIR} (ref=${FISS_MCP_REF})"
+  git clone "${REPO_URL}" "${SRC_DIR}"
 fi
 
-if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+# Pin to the expected release. Fetch the tag if missing (e.g. older clone),
+# checkout, then verify the resolved commit matches the recorded SHA. Mismatch
+# means the upstream tag was moved — abort rather than silently building a
+# different version.
+git -C "${SRC_DIR}" fetch --tags --quiet origin
+git -C "${SRC_DIR}" checkout --quiet "${FISS_MCP_REF}"
+RESOLVED="$(git -C "${SRC_DIR}" rev-parse HEAD)"
+if [[ "${RESOLVED}" != "${FISS_MCP_REF_COMMIT}" ]]; then
+  echo "host_fiss_mcp: tag ${FISS_MCP_REF} resolved to ${RESOLVED}," >&2
+  echo "              expected ${FISS_MCP_REF_COMMIT}. Refusing to build a" >&2
+  echo "              non-pinned revision. Re-confirm the upstream tag and" >&2
+  echo "              update FISS_MCP_REF_COMMIT in this script." >&2
+  exit 1
+fi
+
+if [[ ! -f "${VENV_DIR}/pyvenv.cfg" ]]; then
   echo "host_fiss_mcp: creating venv at ${VENV_DIR}"
   "$PY" -m venv "${VENV_DIR}"
 fi
 
-# Marker file lets us skip the heavy pip step on repeat runs. Bump the marker
-# string when bumping pinned deps to force a reinstall.
+# Marker file lets us skip the heavy pip step on repeat runs. The marker
+# encodes the pinned ref + resolved commit, so any pin bump forces a
+# reinstall on the next setup_host.sh run.
 MARKER="${VENV_DIR}/.installed.marker"
-EXPECTED_MARKER="fiss-mcp@$(git -C "${SRC_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
+EXPECTED_MARKER="fiss-mcp@${FISS_MCP_REF}+${FISS_MCP_REF_COMMIT}"
 if [[ ! -f "${MARKER}" ]] || ! grep -q -x -F "${EXPECTED_MARKER}" "${MARKER}"; then
   echo "host_fiss_mcp: installing fiss-mcp + fastmcp into venv"
   "${VENV_DIR}/bin/pip" install --quiet --upgrade pip "setuptools<80"
