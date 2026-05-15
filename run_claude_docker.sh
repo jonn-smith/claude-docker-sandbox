@@ -217,55 +217,54 @@ cleanup_host_fiss() {
 trap cleanup_host_fiss EXIT INT TERM
 
 if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
-  HOST_FISS_INSTALL="${SCRIPT_DIR}/host_fiss_mcp/install.sh"
-  if [[ ! -f "${HOST_FISS_INSTALL}" ]]; then
-    echo "fiss-mcp: ${HOST_FISS_INSTALL} not found; disabling fiss-mcp for this launch" >&2
-    FISS_MCP_ENABLED=0
-  else
-    bash "${HOST_FISS_INSTALL}"
-    INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp"
-
-    # Per-instance port so concurrent sandboxes don't collide. Hash the
-    # instance name into 39000-39999. Override with FISS_MCP_PORT.
-    PORT_OFFSET=$(printf '%s' "${CLAUDE_SANDBOX_INSTANCE}" | cksum | awk '{print $1 % 1000}')
-    HOST_FISS_PORT="${FISS_MCP_PORT:-$((39000 + PORT_OFFSET))}"
-    HOST_FISS_PATH="/mcp/"
-
-    if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
-      echo "fiss-mcp: 127.0.0.1:${HOST_FISS_PORT} already in use." >&2
-      echo "          Set FISS_MCP_PORT to a free port or stop the conflicting process." >&2
-      exit 1
-    fi
-
-    HOST_FISS_LOG="${SANDBOX_HOME}/.claude/host_fiss_mcp.log"
-    mkdir -p "$(dirname "${HOST_FISS_LOG}")"
-
-    FISS_MCP_HOST="127.0.0.1" \
-    FISS_MCP_PORT="${HOST_FISS_PORT}" \
-    FISS_MCP_PATH="${HOST_FISS_PATH}" \
-    FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
-    nohup "${INSTALL_ROOT}/venv/bin/python" "${INSTALL_ROOT}/run-server.py" \
-      > "${HOST_FISS_LOG}" 2>&1 &
-    HOST_FISS_PID=$!
-
-    echo -n "fiss-mcp: waiting for host server on 127.0.0.1:${HOST_FISS_PORT} "
-    READY=0
-    for _ in $(seq 1 30); do
-      if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
-        READY=1; echo " OK"; break
-      fi
-      echo -n "."; sleep 1
-    done
-    if [[ "$READY" != "1" ]]; then
-      echo " FAILED"
-      echo "fiss-mcp: server did not come up — last 20 lines of ${HOST_FISS_LOG}:" >&2
-      tail -20 "${HOST_FISS_LOG}" >&2 || true
-      exit 1
-    fi
-
-    FISS_MCP_URL_FOR_CONTAINER="http://host.docker.internal:${HOST_FISS_PORT}${HOST_FISS_PATH}"
-    echo "fiss-mcp: host server pid=${HOST_FISS_PID} url=${FISS_MCP_URL_FOR_CONTAINER}"
+  INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp"
+  if [[ ! -x "${INSTALL_ROOT}/venv/bin/python" || ! -f "${INSTALL_ROOT}/run-server.py" ]]; then
+    echo "ERROR: fiss-mcp host install not found at ${INSTALL_ROOT}." >&2
+    echo "       Run ./setup_host.sh on this machine first to install it," >&2
+    echo "       or export FISS_MCP=0 to launch without Terra access." >&2
+    exit 1
   fi
+
+  # Per-instance port so concurrent sandboxes don't collide. Hash the
+  # instance name into 39000-39999. Override with FISS_MCP_PORT.
+  PORT_OFFSET=$(printf '%s' "${CLAUDE_SANDBOX_INSTANCE}" | cksum | awk '{print $1 % 1000}')
+  HOST_FISS_PORT="${FISS_MCP_PORT:-$((39000 + PORT_OFFSET))}"
+  HOST_FISS_PATH="/mcp/"
+
+  if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
+    echo "fiss-mcp: 127.0.0.1:${HOST_FISS_PORT} already in use." >&2
+    echo "          Set FISS_MCP_PORT to a free port or stop the conflicting process." >&2
+    exit 1
+  fi
+
+  HOST_FISS_LOG="${SANDBOX_HOME}/.claude/host_fiss_mcp.log"
+  mkdir -p "$(dirname "${HOST_FISS_LOG}")"
+
+  FISS_MCP_HOST="127.0.0.1" \
+  FISS_MCP_PORT="${HOST_FISS_PORT}" \
+  FISS_MCP_PATH="${HOST_FISS_PATH}" \
+  FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
+  nohup "${INSTALL_ROOT}/venv/bin/python" "${INSTALL_ROOT}/run-server.py" \
+    > "${HOST_FISS_LOG}" 2>&1 &
+  HOST_FISS_PID=$!
+
+  echo -n "fiss-mcp: waiting for host server on 127.0.0.1:${HOST_FISS_PORT} "
+  READY=0
+  for _ in $(seq 1 30); do
+    if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
+      READY=1; echo " OK"; break
+    fi
+    echo -n "."; sleep 1
+  done
+  if [[ "$READY" != "1" ]]; then
+    echo " FAILED"
+    echo "fiss-mcp: server did not come up — last 20 lines of ${HOST_FISS_LOG}:" >&2
+    tail -20 "${HOST_FISS_LOG}" >&2 || true
+    exit 1
+  fi
+
+  FISS_MCP_URL_FOR_CONTAINER="http://host.docker.internal:${HOST_FISS_PORT}${HOST_FISS_PATH}"
+  echo "fiss-mcp: host server pid=${HOST_FISS_PID} url=${FISS_MCP_URL_FOR_CONTAINER}"
 fi
 
 # Loud warning when fiss-mcp is launching with write access. Writes can

@@ -119,7 +119,7 @@ The launcher spawns [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) as a 
 
 **Why host-side**: the container never sees `gcloud`, `gsutil`, `google-cloud-*` libs, `~/.config/gcloud`, or any service-account key file. The agent's only reachable path to Terra/GCP is the MCP tools the host server exposes — which are read-only by default. There is no shell-level bypass.
 
-**Install**: `run_claude_docker.sh` runs `host_fiss_mcp/install.sh` on every launch (idempotent). The first run clones fiss-mcp into `${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp/` and creates a venv there. Subsequent runs skip the work via a marker file. Requires Python 3.10+ on the host.
+**Install**: `setup_host.sh` runs `host_fiss_mcp/install.sh` once. It clones fiss-mcp into `${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp/`, creates a venv there (isolated from any other Python install on the host), and installs the package editable. Requires Python 3.10+ on the host (apt-installed by `setup_host.sh` if missing). If you launch `run_claude_docker.sh` with `FISS_MCP=1` and the install dir is absent, the run script errors out and tells you to run `./setup_host.sh`.
 
 **Auth**: the host server inherits the host's gcloud credentials directly — no mount, no env var forwarding. Set up once on the host:
 

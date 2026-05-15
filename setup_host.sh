@@ -67,9 +67,27 @@ postconf -h mynetworks
 
 ################################################################################
 
-echo 
-echo 
-echo 
-echo 
+################################################################################
+
+# fiss-mcp (Terra MCP server) lives on the host, not in the container, so it
+# needs a host-side venv. Done here once at setup time — the run script will
+# refuse to launch with FISS_MCP=1 until this completes.
+echo
+echo "Installing host-side fiss-mcp (Terra MCP server)"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 not on PATH; installing python3 + venv"
+  sudo apt-get install -y --no-install-recommends python3 python3-venv python3-pip
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "${SCRIPT_DIR}/host_fiss_mcp/install.sh"
+
+################################################################################
+
+echo
+echo
+echo
+echo
 echo "YOU MUST LOG OUT AND LOG BACK IN FOR DOCKER GROUP SETTINGS TO PROPAGATE CORRECTLY"
 
