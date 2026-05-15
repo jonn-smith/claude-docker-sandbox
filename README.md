@@ -10,7 +10,7 @@ Look, this uses a heavy docker image, and it's suited to my (Jonn's) needs.  Nev
 Beyond the normal setup and build features, this sandbox has:
 - Automated emails for prompts that take longer than <CONFIGURABLE> seconds to complete (default 120)
 - A built-in, pre-configured [headroom](https://github.com/chopratejas/headroom) installation (runtime-disable-able)
-- A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra (uses host machine credentials; runtime-disable-able). Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red figlet banner on the host **and** inside the container so it is impossible to miss.
+- A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra (uses host machine credentials; runtime-disable-able). Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
 
 I've tried to include everything I need for my typical work.
 
@@ -135,7 +135,7 @@ FISS_MCP=0 ./run_claude_docker.sh                 # off
 FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh    # on, WRITE MODE (loud banner)
 ```
 
-> **Warning**: `FISS_MCP_ALLOW_WRITES=1` lets the agent submit workflows, mutate workspace attributes, and spend money on your Terra/GCP account. Both `run_claude_docker.sh` and `start_script.sh` print a red `figlet` banner when write mode is on, on the host and inside the container respectively, so the warning shows up no matter where you're reading the terminal.
+> **Warning**: `FISS_MCP_ALLOW_WRITES=1` lets the agent submit workflows, mutate workspace attributes, and spend money on your Terra/GCP account. Both `run_claude_docker.sh` and `start_script.sh` print a red ASCII-art banner (pre-rendered figlet output, no host or image dependency) when write mode is on, on the host and inside the container respectively, so the warning shows up no matter where you're reading the terminal.
 
 Service-account key override (instead of user ADC):
 

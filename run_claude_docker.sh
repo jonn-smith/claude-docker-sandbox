@@ -206,19 +206,23 @@ fi
 
 # Loud warning when fiss-mcp is launching with write access. Writes can
 # submit workflows, mutate workspace attributes, and spend real money. The
-# figlet banner is intentionally hard to miss; the in-container start_script
-# prints a matching banner so the warning is unavoidable on both sides.
+# banner below is pre-rendered figlet output (font: standard) baked into
+# the script so we don't need figlet on the host. The in-container
+# start_script prints a matching banner so the warning is unavoidable on
+# both sides.
 if [[ "${FISS_MCP_ENABLED}" == "1" && "${FISS_MCP_ALLOW_WRITES:-0}" == "1" ]]; then
   RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
   echo
-  echo "${RED}"
-  if command -v figlet >/dev/null 2>&1; then
-    figlet -w 120 "FISS WRITE MODE"
-  else
-    echo "##############################################################"
-    echo "#  F I S S - M C P   W R I T E   M O D E   E N A B L E D     #"
-    echo "##############################################################"
-  fi
+  printf '%s' "${RED}"
+  cat <<'BANNER'
+ _____ ___ ____ ____   __        ______  ___ _____ _____   __  __  ___  ____  _____
+|  ___|_ _/ ___/ ___|  \ \      / /  _ \|_ _|_   _| ____| |  \/  |/ _ \|  _ \| ____|
+| |_   | |\___ \___ \   \ \ /\ / /| |_) || |  | | |  _|   | |\/| | | | | | | |  _|
+|  _|  | | ___) |__) |   \ V  V / |  _ < | |  | | | |___  | |  | | |_| | |_| | |___
+|_|   |___|____/____/     \_/\_/  |_| \_\___| |_| |_____| |_|  |_|\___/|____/|_____|
+BANNER
+  printf '%s' "${RST}"
+  echo
   echo "${YEL}fiss-mcp is launching with --allow-writes.${RST}"
   echo "${YEL}The agent CAN submit workflows, mutate workspace attributes,${RST}"
   echo "${YEL}and otherwise spend money on your Terra/GCP account.${RST}"

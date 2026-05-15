@@ -6,7 +6,7 @@ FROM node:22-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git ca-certificates curl gnupg ripgrep vim sudo gosu jq figlet \
+      git ca-certificates curl gnupg ripgrep vim sudo gosu jq \
       openssh-client \
       python3 python3-pip python3-venv \
       build-essential
@@ -57,8 +57,8 @@ RUN python3 -m venv /opt/claude-venv && \
 # fiss-mcp (Terra MCP server). Isolated venv so its deps (firecloud, fastmcp,
 # google-cloud-*) can't collide with claude-venv. Wrapper at
 # /usr/local/bin/fiss-mcp-server picks up FISS_MCP_ALLOW_WRITES at run time.
-# Read-only by default; write mode triggers loud figlet banners on both
-# the host launcher and the in-container start script.
+# Read-only by default; write mode triggers loud (pre-rendered, no figlet
+# dep) banners on both the host launcher and the in-container start script.
 RUN git clone --depth=1 https://github.com/broadinstitute/fiss-mcp /opt/fiss-mcp && \
     python3 -m venv /opt/fiss-mcp-venv && \
     /opt/fiss-mcp-venv/bin/pip install --no-cache-dir --upgrade pip "setuptools<80" && \
