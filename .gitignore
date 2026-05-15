@@ -27,3 +27,9 @@ SAVED_SNAPSHOTS
 env.sh
 env.*.sh
 !env.example.sh
+
+# Host-side fiss-mcp install artifacts. Only the install.sh + run-server.py
+# tracked source files belong in git; the venv and cloned source tree are
+# created fresh by setup_host.sh.
+host_fiss_mcp/venv/
+host_fiss_mcp/fiss-mcp/

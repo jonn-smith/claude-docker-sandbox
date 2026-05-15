@@ -217,7 +217,7 @@ cleanup_host_fiss() {
 trap cleanup_host_fiss EXIT INT TERM
 
 if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
-  INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp"
+  INSTALL_ROOT="${SCRIPT_DIR}/host_fiss_mcp"
   if [[ ! -x "${INSTALL_ROOT}/venv/bin/python" || ! -f "${INSTALL_ROOT}/run-server.py" ]]; then
     echo "ERROR: fiss-mcp host install not found at ${INSTALL_ROOT}." >&2
     echo "       Run ./setup_host.sh on this machine first to install it," >&2

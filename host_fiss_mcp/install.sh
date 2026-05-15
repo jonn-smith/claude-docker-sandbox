@@ -6,19 +6,14 @@
 # path to Terra/GCP from inside the sandbox is the MCP tools exposed by this
 # server, which is read-only by default.
 #
-# Installs into $XDG_DATA_HOME/claude-sandbox-fiss-mcp (default
-# ~/.local/share/claude-sandbox-fiss-mcp). Re-run any time; skips work that is
-# already done.
+# Installs alongside this script (the host_fiss_mcp/ directory in the repo
+# checkout). Re-run any time; skips work that is already done.
 set -euo pipefail
 
-INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/claude-sandbox-fiss-mcp"
+INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="${INSTALL_ROOT}/fiss-mcp"
 VENV_DIR="${INSTALL_ROOT}/venv"
-RUN_WRAPPER_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-server.py"
-RUN_WRAPPER_DST="${INSTALL_ROOT}/run-server.py"
 REPO_URL="https://github.com/broadinstitute/fiss-mcp.git"
-
-mkdir -p "${INSTALL_ROOT}"
 
 # Python 3.10+ check (fiss-mcp requires >=3.10).
 PY="${PYTHON:-python3}"
@@ -53,7 +48,5 @@ if [[ ! -f "${MARKER}" ]] || ! grep -q -x -F "${EXPECTED_MARKER}" "${MARKER}"; t
   "${VENV_DIR}/bin/pip" install --quiet --no-build-isolation -e "${SRC_DIR}"
   echo "${EXPECTED_MARKER}" > "${MARKER}"
 fi
-
-install -m 0755 "${RUN_WRAPPER_SRC}" "${RUN_WRAPPER_DST}"
 
 echo "host_fiss_mcp: ready at ${INSTALL_ROOT}"
