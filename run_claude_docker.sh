@@ -101,6 +101,16 @@ write_default_settings() {
         ]
       }
     ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/notify-if-long.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
