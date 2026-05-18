@@ -22,7 +22,6 @@ if [[ "${HEADROOM:-0}" == "1" ]]; then
   HR_PID=$!
   trap 'kill "${HR_PID}" 2>/dev/null || true' EXIT
 
-  echo "headroom: starting on :${HEADROOM_PORT}"
   echo -n "Waiting for headroom proxy to start "
   for _ in {1..25}; do
     echo -n "."
