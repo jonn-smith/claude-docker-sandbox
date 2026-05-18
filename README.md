@@ -38,7 +38,7 @@ source env.example.sh
 
 ### At first run, after initial setup, make sure to:
 
-1. Install the [caveman](https://github.com/JuliusBrussee/caveman) plugin:
+1. Install the [caveman](https://github.com/JuliusBrussee/caveman) plugin to save precious tokens:
 ```
 claude plugin marketplace add JuliusBrussee/caveman && claude plugin install caveman@caveman
 ```
