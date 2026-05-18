@@ -226,7 +226,7 @@ This sandbox restricts **filesystem access only**. Network access from inside th
 Paths are driven by environment variables — nothing is hardcoded in `run_claude_docker.sh`. Set these in your `env.<INSTANCE>.sh` (start from `env.example.sh`):
 
 - `CLAUDE_SANDBOX_PROJECTS_DIR` — host dir mounted at `/workspace` (required).
-- `CLAUDE_SANDBOX_CONTEXT_DIR` — host dir mounted at `/context_reference` (required).
+- `CLAUDE_SANDBOX_CONTEXT_DIR` — host dir mounted at `/context` (required).
 - `CLAUDE_SANDBOX_INSTANCE` — unique instance name (required; suffixes container, DinD volume, state dir).
 - `CLAUDE_SANDBOX_HOME` — override the per-instance state dir (default: `claude-sandbox-persistent-state-<INSTANCE>/` alongside the launcher).
 - `CLAUDE_SANDBOX_SHARED` — override the shared dir in shared mode (default: `claude-sandbox-shared/`).
