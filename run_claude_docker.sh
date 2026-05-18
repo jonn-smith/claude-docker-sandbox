@@ -231,8 +231,21 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   HOST_FISS_PORT="${FISS_MCP_PORT:-$((39000 + PORT_OFFSET))}"
   HOST_FISS_PATH="/mcp/"
 
-  if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
-    echo "fiss-mcp: 127.0.0.1:${HOST_FISS_PORT} already in use." >&2
+  # Bind only to the docker bridge gateway IP — the same address the container
+  # reaches us at via `host.docker.internal:host-gateway`. This keeps the MCP
+  # off external interfaces (eth0, wlan0) without needing iptables / firewall
+  # config. Refuse to launch if we can't determine the bridge IP rather than
+  # silently falling back to 0.0.0.0.
+  HOST_BIND_IP="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+  if [[ -z "${HOST_BIND_IP}" ]]; then
+    echo "fiss-mcp: could not determine docker bridge gateway IP via" >&2
+    echo "          \`docker network inspect bridge\`. Refusing to bind 0.0.0.0." >&2
+    echo "          Verify docker is running and the default bridge exists." >&2
+    exit 1
+  fi
+
+  if (echo > "/dev/tcp/${HOST_BIND_IP}/${HOST_FISS_PORT}") 2>/dev/null; then
+    echo "fiss-mcp: ${HOST_BIND_IP}:${HOST_FISS_PORT} already in use." >&2
     echo "          Set FISS_MCP_PORT to a free port or stop the conflicting process." >&2
     exit 1
   fi
@@ -240,11 +253,7 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   HOST_FISS_LOG="${SANDBOX_HOME}/.claude/host_fiss_mcp.log"
   mkdir -p "$(dirname "${HOST_FISS_LOG}")"
 
-  # Bind 0.0.0.0 (not 127.0.0.1): the container reaches us via
-  # `host.docker.internal:host-gateway`, which on Linux resolves to the docker
-  # bridge gateway IP (e.g. 172.17.0.1) — not loopback. A 127.0.0.1-only bind
-  # refuses those connections.
-  FISS_MCP_HOST="0.0.0.0" \
+  FISS_MCP_HOST="${HOST_BIND_IP}" \
   FISS_MCP_PORT="${HOST_FISS_PORT}" \
   FISS_MCP_PATH="${HOST_FISS_PATH}" \
   FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
@@ -252,10 +261,10 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
     > "${HOST_FISS_LOG}" 2>&1 &
   HOST_FISS_PID=$!
 
-  echo -n "fiss-mcp: waiting for host server on 127.0.0.1:${HOST_FISS_PORT} "
+  echo -n "fiss-mcp: waiting for host server on ${HOST_BIND_IP}:${HOST_FISS_PORT} "
   READY=0
   for _ in $(seq 1 30); do
-    if (echo > "/dev/tcp/127.0.0.1/${HOST_FISS_PORT}") 2>/dev/null; then
+    if (echo > "/dev/tcp/${HOST_BIND_IP}/${HOST_FISS_PORT}") 2>/dev/null; then
       READY=1; echo " OK"; break
     fi
     echo -n "."; sleep 1
