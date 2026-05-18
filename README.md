@@ -121,6 +121,8 @@ The launcher spawns [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) as a 
 
 **Install**: `setup_host.sh` runs `host_fiss_mcp/install.sh` once. It clones fiss-mcp into `host_fiss_mcp/fiss-mcp/` (next to the script in this repo) and creates a venv at `host_fiss_mcp/venv/` — both gitignored — so everything is self-contained inside the checkout and isolated from any other Python install on the host. Requires Python 3.10+ on the host (apt-installed by `setup_host.sh` if missing). If you launch `run_claude_docker.sh` with `FISS_MCP=1` and the install dir is absent, the run script errors out and tells you to run `./setup_host.sh`.
 
+The installer pins fiss-mcp to a specific release tag **and** verifies the resolved commit SHA against a recorded value. If the upstream tag has been moved, the install aborts rather than silently building a different version. A marker file in the venv encodes the pinned ref + SHA; a re-install runs automatically the next time you bump either constant in `host_fiss_mcp/install.sh`.
+
 **Auth**: the host server inherits the host's gcloud credentials directly — no mount, no env var forwarding. Set up once on the host:
 
 ```bash
@@ -143,6 +145,8 @@ FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh    # on, WRITE MODE (loud banner)
 **Ports**: each instance gets a deterministic port in `39000-39999` hashed from `CLAUDE_SANDBOX_INSTANCE`, so concurrent sandboxes don't collide. Override with `FISS_MCP_PORT=<port>` if the auto-pick clashes with something else on the host.
 
 **Container connectivity**: `run_claude_docker.sh` adds `--add-host=host.docker.internal:host-gateway` so the container can reach the host on a stable name. Works with `sysbox-runc` because it's a Docker daemon flag, not a runtime concern.
+
+**Bind address**: the host server binds **only** the docker bridge gateway IP (auto-detected via `docker network inspect bridge`), not `0.0.0.0` and not `127.0.0.1`. That's the same address the container reaches us at via `host.docker.internal`, so container ingress is unchanged — but the listener is not present on `eth0` / `wlan0` / any external interface, so no iptables fence is required to keep it off the host's outside-world network. If the bridge gateway can't be determined (broken docker setup), the launcher fails fast rather than silently widening the bind to `0.0.0.0`.
 
 **Lifecycle**: trap on `EXIT INT TERM` kills the host fastmcp process. If the launcher is `kill -9`'d, the orphan can be reaped with `pkill -f run-server.py`. The MCP log lives at `${SANDBOX_HOME}/.claude/host_fiss_mcp.log`.
 
@@ -230,4 +234,12 @@ This sandbox restricts **filesystem access only**. Network access from inside th
 
 ## Adapting paths for your machine
 
-The launcher script hardcodes `PROJECTS_DIR` and `PERSISTENT_STATE_DIR` to the author's layout. If you're reusing this outside that setup, edit those two lines at the top of `run_claude_docker.sh` — everything else is path-independent.
+Paths are driven by environment variables — nothing is hardcoded in `run_claude_docker.sh`. Set these in your `env.<INSTANCE>.sh` (start from `env.example.sh`):
+
+- `CLAUDE_SANDBOX_PROJECTS_DIR` — host dir mounted at `/workspace` (required).
+- `CLAUDE_SANDBOX_CONTEXT_DIR` — host dir mounted at `/context_reference` (required).
+- `CLAUDE_SANDBOX_INSTANCE` — unique instance name (required; suffixes container, DinD volume, state dir).
+- `CLAUDE_SANDBOX_HOME` — override the per-instance state dir (default: `claude-sandbox-persistent-state-<INSTANCE>/` alongside the launcher).
+- `CLAUDE_SANDBOX_SHARED` — override the shared dir in shared mode (default: `claude-sandbox-shared/`).
+
+Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, and `CLAUDE_SANDBOX_USE_SHARED` — set whichever you want sticky for that sandbox.
