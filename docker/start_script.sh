@@ -46,6 +46,10 @@ fi
 # spawned it and passed its URL via FISS_MCP_URL. We register an HTTP MCP
 # entry in ~/.claude.json pointing at that URL. FISS_MCP=0 removes the entry.
 # Mutating .claude.json here is race-free — claude has not started yet.
+#
+# Note: ~/.claude.json is bind-mounted from the host, so rename(2) (`mv`) on
+# it fails with EBUSY. We write the temp file, then overwrite in place with
+# `cat > ...` to preserve the bind-mounted inode.
 CLAUDE_JSON="${HOME}/.claude.json"
 [ -s "$CLAUDE_JSON" ] || echo '{}' > "$CLAUDE_JSON"
 
@@ -54,13 +58,13 @@ if [[ "${FISS_MCP:-1}" == "1" ]]; then
     echo "fiss-mcp: WARNING — FISS_MCP=1 but FISS_MCP_URL is empty." >&2
     echo "          The host launcher did not advertise an MCP server. Skipping registration." >&2
     jq 'if .mcpServers? then .mcpServers |= del(.["fiss-mcp"]) else . end' \
-       "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+       "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && cat "${CLAUDE_JSON}.tmp" > "$CLAUDE_JSON" && rm "${CLAUDE_JSON}.tmp"
   else
     jq --arg url "${FISS_MCP_URL}" \
        '.mcpServers["fiss-mcp"] = {
           type: "http",
           url: $url
-        }' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+        }' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && cat "${CLAUDE_JSON}.tmp" > "$CLAUDE_JSON" && rm "${CLAUDE_JSON}.tmp"
 
     if [[ "${FISS_MCP_ALLOW_WRITES:-0}" == "1" ]]; then
       # Second banner inside the container so the warning shows up even when
@@ -88,7 +92,7 @@ BANNER
   fi
 else
   jq 'if .mcpServers? then .mcpServers |= del(.["fiss-mcp"]) else . end' \
-     "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+     "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && cat "${CLAUDE_JSON}.tmp" > "$CLAUDE_JSON" && rm "${CLAUDE_JSON}.tmp"
   echo "fiss-mcp: OFF"
 fi
 
