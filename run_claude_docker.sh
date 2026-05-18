@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-set -x
-
 
 # Here we set our directories and credentials so we can authenticate and have
 # a proper sandbox.  It's VERY important that we don't let these agents run
