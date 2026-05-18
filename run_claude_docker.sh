@@ -240,7 +240,11 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   HOST_FISS_LOG="${SANDBOX_HOME}/.claude/host_fiss_mcp.log"
   mkdir -p "$(dirname "${HOST_FISS_LOG}")"
 
-  FISS_MCP_HOST="127.0.0.1" \
+  # Bind 0.0.0.0 (not 127.0.0.1): the container reaches us via
+  # `host.docker.internal:host-gateway`, which on Linux resolves to the docker
+  # bridge gateway IP (e.g. 172.17.0.1) — not loopback. A 127.0.0.1-only bind
+  # refuses those connections.
+  FISS_MCP_HOST="0.0.0.0" \
   FISS_MCP_PORT="${HOST_FISS_PORT}" \
   FISS_MCP_PATH="${HOST_FISS_PATH}" \
   FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
@@ -316,4 +320,22 @@ docker run --rm -it \
   -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
   -w /workspace \
   claude-sandbox:latest /home/claude/start_script.sh "$@"
+
+#docker run --rm -it \
+#  --name "${CONTAINER_NAME}" \
+#  "${MOUNTS[@]}" \
+#  --add-host=host.docker.internal:host-gateway \
+#  --runtime=sysbox-runc \
+#  -e HOST_UID="$(id -u)" \
+#  -e HOST_GID="$(id -g)" \
+#  -e HEADROOM="${HEADROOM:-0}" \
+#  -e HEADROOM_PORT="${HEADROOM_PORT:-8787}" \
+#  -e CLAUDE_NOTIFY_EMAIL="${CLAUDE_NOTIFY_EMAIL:-}" \
+#  -e CLAUDE_NOTIFY_FROM="${CLAUDE_NOTIFY_FROM:-claude-sandbox}" \
+#  -e CLAUDE_NOTIFY_HOSTNAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}" \
+#  -e FISS_MCP="${FISS_MCP_ENABLED}" \
+#  -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
+#  -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
+#  -w /workspace \
+#  claude-sandbox:latest claude "$@"
 
