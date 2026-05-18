@@ -232,3 +232,7 @@ Paths are driven by environment variables — nothing is hardcoded in `run_claud
 - `CLAUDE_SANDBOX_SHARED` — override the shared dir in shared mode (default: `claude-sandbox-shared/`).
 
 Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, and `CLAUDE_SANDBOX_USE_SHARED` — set whichever you want sticky for that sandbox.
+
+## License
+
+[PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0) — see [LICENSE.md](LICENSE.md). Use, modify, and redistribute freely for any purpose **except** providing a product that competes with this software. Standard fair-use rights are preserved.
