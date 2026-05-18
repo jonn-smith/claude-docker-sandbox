@@ -8,7 +8,7 @@ The image is a batteries-included dev environment, so `pip install`, `cargo inst
 Look, this uses a heavy docker image, and it's suited to my (Jonn's) needs.  Nevertheless you may find it useful.
 
 Beyond the normal setup and build features, this sandbox has:
-- Automated emails for prompts that take longer than <CONFIGURABLE> seconds to complete (default 120)
+- Automated email notifications for prompts that take longer than <CONFIGURABLE> seconds to complete (default 120)
 - A built-in, pre-configured [headroom](https://github.com/chopratejas/headroom) installation (runtime-disable-able)
 - A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra. The server runs on the **host**, not inside the container, so the sandbox has no `gcloud` / `gsutil` / `google-cloud-*` libs and no `~/.config/gcloud` mount — the only path from inside the sandbox to Terra/GCP is the MCP tools the server exposes. Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
 
