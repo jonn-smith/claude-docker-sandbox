@@ -193,20 +193,7 @@ Nothing else on the host is visible to the container.
 
 ### Adopting shared mode safely (no risk to existing instances)
 
-Existing `main` / `B` / etc. keep working in per-instance mode untouched. Test shared mode on a brand-new instance first:
-
-```bash
-./migrate_to_shared.sh --dry-run    # preview the merge
-./migrate_to_shared.sh              # populate claude-sandbox-shared/
-
-# launch the new shared-mode instance (env.shared.sh already sets USE_SHARED=1)
-source env.shared.sh
-./run_claude_docker.sh
-```
-
-`migrate_to_shared.sh` only **reads** the existing instance dirs and writes into the new `claude-sandbox-shared/`. Nothing in `claude-sandbox-persistent-state-*` is modified. Rollback = `rm -rf claude-sandbox-shared/`.
-
-Once the `shared` instance proves stable, opt other instances in by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to their `env.<INSTANCE>.sh`. Switch back any time by removing that line.
+Existing `main` / `B` / etc. keep working in per-instance mode untouched. Opt a sandbox into shared mode by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to its `env.<INSTANCE>.sh`. First launch populates `claude-sandbox-shared/` from the seeded defaults; subsequent launches reuse it. Switch back any time by removing that line.
 
 ### Concurrency caveats (shared mode)
 
