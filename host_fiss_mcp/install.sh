@@ -10,7 +10,7 @@
 # checkout). Re-run any time; skips work that is already done.
 set -euo pipefail
 
-INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 SRC_DIR="${INSTALL_ROOT}/fiss-mcp"
 VENV_DIR="${INSTALL_ROOT}/venv"
 REPO_URL="https://github.com/broadinstitute/fiss-mcp.git"

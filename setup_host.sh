@@ -78,7 +78,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   sudo apt-get install -y --no-install-recommends python3 python3-venv python3-pip
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 bash "${SCRIPT_DIR}/host_fiss_mcp/install.sh"
 
 ################################################################################

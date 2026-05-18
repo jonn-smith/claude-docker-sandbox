@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -x
+
 
 # Here we set our directories and credentials so we can authenticate and have
 # a proper sandbox.  It's VERY important that we don't let these agents run
@@ -51,7 +53,13 @@ CONTAINER_NAME="claude-sandbox-${CLAUDE_SANDBOX_INSTANCE}"
 # exporting CLAUDE_SANDBOX_USE_SHARED=1 in their env.<INSTANCE>.sh.
 USE_SHARED="${CLAUDE_SANDBOX_USE_SHARED:-0}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the script's actual location, following symlinks, so SCRIPT_DIR
+# points at the repo regardless of where the caller invoked from. Without
+# `readlink -f` a `./run_claude_docker.sh` invocation from a directory that
+# contains a *symlink* (or a copy) of the script resolved SCRIPT_DIR to the
+# caller's CWD, redirecting shared state + persistent state lookups to a
+# location that has none of the repo's content.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PERSISTENT_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-persistent-state${INSTANCE_SUFFIX}"
 SHARED_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-shared"
 SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
