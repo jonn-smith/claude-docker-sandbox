@@ -1,4 +1,4 @@
-# Claude Code Sandbox
+# Claude Code Sandbox _FOR LINUX_
 
 A Docker-based sandbox for running the [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) CLI with local filesystem isolation. The container sees only a designated workspace directory and its own persistent state — the host's home directory, `/etc`, and everything else on the host remain invisible to the agent.
 
@@ -13,6 +13,8 @@ Beyond the normal setup and build features, this sandbox has:
 - A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra. The server runs on the **host**, not inside the container, so the sandbox has no `gcloud` / `gsutil` / `google-cloud-*` libs and no `~/.config/gcloud` mount — the only path from inside the sandbox to Terra/GCP is the MCP tools the server exposes. Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
 
 I've tried to include everything I need for my typical work.
+
+This is still Linux only.  Mac build might be coming soon.
 
 ## Quick start (fresh clone)
 
