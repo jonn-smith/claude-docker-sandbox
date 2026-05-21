@@ -83,6 +83,29 @@ bash "${SCRIPT_DIR}/host_fiss_mcp/install.sh"
 
 ################################################################################
 
+# gcloud check for Vertex mode. The vertex_proxy.py script mints OAuth tokens
+# via `gcloud auth print-access-token`, so Vertex mode is dead-in-the-water
+# without gcloud on PATH. We intentionally do NOT install it here — picking a
+# distribution channel (apt repo / snap / Google's install script) is a host
+# policy decision. Just warn loudly so the user can act if they care.
+echo
+echo "Checking for gcloud (required only for Vertex mode)..."
+if command -v gcloud >/dev/null 2>&1; then
+  echo "gcloud: found at $(command -v gcloud)"
+else
+  RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
+  echo
+  echo "${RED}WARNING:${RST} ${YEL}gcloud is not on PATH.${RST}"
+  echo "${YEL}Vertex mode (CLAUDE_CODE_USE_VERTEX=1) will not work until gcloud is${RST}"
+  echo "${YEL}installed and authenticated:${RST}"
+  echo "${YEL}    gcloud auth login${RST}"
+  echo "${YEL}    gcloud auth application-default login${RST}"
+  echo "${YEL}Anthropic-API (default) mode does not need gcloud and is unaffected.${RST}"
+  echo
+fi
+
+################################################################################
+
 echo
 echo
 echo

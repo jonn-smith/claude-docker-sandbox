@@ -28,6 +28,15 @@ env.sh
 env.*.sh
 !env.example.sh
 
+# Vertex-mode activation script holds a real GCP project id. Only the
+# placeholder template is tracked.
+SET_VERTEX_MODE.sh
+!SET_VERTEX_MODE.example.sh
+
+# Python bytecode cache. Leaks in when py_compile / pyflakes is run from
+# the repo root against vertex_proxy.py.
+__pycache__/
+
 # Host-side fiss-mcp install artifacts. Only the install.sh + run-server.py
 # tracked source files belong in git; the venv and cloned source tree are
 # created fresh by setup_host.sh.

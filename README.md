@@ -154,6 +154,48 @@ FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh    # on, WRITE MODE (loud banner)
 
 Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` / `FISS_MCP_PORT` in `env.<INSTANCE>.sh`.
 
+## Vertex AI mode (Google Cloud auth)
+
+The sandbox can route `claude` traffic through [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude) instead of the default Anthropic API. Same as fiss-mcp, the gcloud-shaped pieces (access-token mint, GCP service-account or ADC creds) stay on the **host** — the container has no `gcloud`, no `google-cloud-*` libs, and no `~/.config/gcloud` mount. A small host-side script (`vertex_proxy.py`) accepts Anthropic-shape POST bodies from `claude` inside the container, signs them with a fresh `gcloud auth print-access-token`, and forwards to Vertex.
+
+**Activate**: copy the template, edit your project id, source it, launch:
+
+```bash
+cp SET_VERTEX_MODE.example.sh SET_VERTEX_MODE.sh
+$EDITOR SET_VERTEX_MODE.sh           # set ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION
+source SET_VERTEX_MODE.sh
+./run_claude_docker.sh
+```
+
+`SET_VERTEX_MODE.sh` is gitignored — your real project id won't accidentally land in a commit. To go back to default Anthropic-API mode, `source UNSET_VERTEX_MODE.sh` (or open a fresh shell).
+
+**Requires gcloud on the host**: the proxy mints OAuth tokens via `gcloud auth print-access-token`. `setup_host.sh` checks for `gcloud` on `PATH` at install time and prints a warning if missing — it does **not** install gcloud automatically (picking a distribution channel is a host-policy decision). On a workstation, install the SDK from your distro or [Google's instructions](https://cloud.google.com/sdk/docs/install), then:
+
+```bash
+gcloud auth login
+gcloud auth application-default login
+```
+
+The launcher refuses to start in Vertex mode if `gcloud` isn't on `PATH`, or if `ANTHROPIC_VERTEX_PROJECT_ID` / `CLOUD_ML_REGION` are unset.
+
+**How the container is wired**: when `CLAUDE_CODE_USE_VERTEX=1` is present in the launching shell, `run_claude_docker.sh`:
+
+1. Spawns `vertex_proxy.py` bound only to the docker bridge gateway IP, on a per-instance hashed port in `38000-38999` (disjoint from fiss-mcp's 39xxx range).
+2. Waits for it to come up, registers a trap on `EXIT INT TERM` so the proxy dies with the launcher.
+3. Forwards `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `ANTHROPIC_VERTEX_BASE_URL=http://host.docker.internal:<port>/v1`, and `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` into the container.
+
+The `SKIP_VERTEX_AUTH` flag is the load-bearing one: without it, `claude` inside the container tries to find Google ADC creds (which aren't there), and the launch fails. With it set, `claude` sends unauthenticated requests to the proxy, and the proxy attaches a bearer token from the host's gcloud session.
+
+**Bind address**: same model as fiss-mcp — bridge gateway IP only, never `0.0.0.0`. Launcher fails fast if the bridge IP can't be determined.
+
+**Port override**: `VERTEX_PROXY_PORT=<port>` on the launcher line picks a specific port if the auto-pick clashes.
+
+**Log**: `${SANDBOX_HOME}/.claude/host_vertex_proxy.log`. Tail this when debugging auth failures or upstream Vertex errors.
+
+**fiss-mcp and Vertex are orthogonal** — you can run both simultaneously (separate processes, separate port ranges, separate trap cleanups) or either alone.
+
+Per-instance default: add `CLAUDE_CODE_USE_VERTEX=1` and friends to `env.<INSTANCE>.sh` if you want a specific sandbox to always run in Vertex mode.
+
 ## Mounts
 
 Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
@@ -231,7 +273,7 @@ Paths are driven by environment variables — nothing is hardcoded in `run_claud
 - `CLAUDE_SANDBOX_HOME` — override the per-instance state dir (default: `claude-sandbox-persistent-state-<INSTANCE>/` alongside the launcher).
 - `CLAUDE_SANDBOX_SHARED` — override the shared dir in shared mode (default: `claude-sandbox-shared/`).
 
-Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, and `CLAUDE_SANDBOX_USE_SHARED` — set whichever you want sticky for that sandbox.
+Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, `CLAUDE_SANDBOX_USE_SHARED`, and the Vertex-mode vars (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `VERTEX_PROXY_PORT`) — set whichever you want sticky for that sandbox.
 
 ## License
 

@@ -123,6 +123,10 @@ write_default_settings() {
           {
             "type": "command",
             "command": "~/.claude/hooks/notify-if-long.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/notify-if-rate-limited.sh"
           }
         ]
       }
@@ -220,7 +224,18 @@ cleanup_host_fiss() {
     wait "${HOST_FISS_PID}" 2>/dev/null || true
   fi
 }
-trap cleanup_host_fiss EXIT INT TERM
+# Vertex proxy state — declared here so the cleanup function below is safe
+# under `set -u` even when Vertex mode is off.
+HOST_VERTEX_PID=""
+cleanup_host_vertex() {
+  if [[ -n "${HOST_VERTEX_PID:-}" ]] && kill -0 "${HOST_VERTEX_PID}" 2>/dev/null; then
+    echo "vertex_proxy: stopping (pid=${HOST_VERTEX_PID})"
+    kill "${HOST_VERTEX_PID}" 2>/dev/null || true
+    wait "${HOST_VERTEX_PID}" 2>/dev/null || true
+  fi
+}
+cleanup_host_services() { cleanup_host_fiss; cleanup_host_vertex; }
+trap cleanup_host_services EXIT INT TERM
 
 if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   INSTALL_ROOT="${SCRIPT_DIR}/host_fiss_mcp"
@@ -286,6 +301,91 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   echo "fiss-mcp: host server pid=${HOST_FISS_PID} url=${FISS_MCP_URL_FOR_CONTAINER}"
 fi
 
+# Vertex AI proxy lifecycle. Activated when the parent shell has sourced
+# SET_VERTEX_MODE.sh, which exports CLAUDE_CODE_USE_VERTEX=1 along with
+# ANTHROPIC_VERTEX_PROJECT_ID, CLOUD_ML_REGION, and (optionally) ANTHROPIC_MODEL.
+# The sandbox container has no gcloud / google-cloud-* libs, so vertex_proxy.py
+# runs on the host and we route claude-code's Vertex calls through it via
+# ANTHROPIC_VERTEX_BASE_URL. CLAUDE_CODE_SKIP_VERTEX_AUTH=1 tells claude-code
+# to skip its own Google ADC lookup; the host proxy mints the access token.
+VERTEX_ENABLED="${CLAUDE_CODE_USE_VERTEX:-0}"
+VERTEX_BASE_URL_FOR_CONTAINER=""
+HOST_VERTEX_LOG=""
+
+if [[ "$VERTEX_ENABLED" == "1" ]]; then
+  if ! command -v gcloud >/dev/null 2>&1; then
+    echo "vertex_proxy: gcloud not on PATH; cannot mint Vertex access tokens." >&2
+    echo "              Install Google Cloud SDK + run 'gcloud auth login' and" >&2
+    echo "              'gcloud auth application-default login', or unset" >&2
+    echo "              CLAUDE_CODE_USE_VERTEX to launch in Anthropic-API mode." >&2
+    exit 1
+  fi
+  if [[ -z "${ANTHROPIC_VERTEX_PROJECT_ID:-}" ]]; then
+    echo "vertex_proxy: ANTHROPIC_VERTEX_PROJECT_ID is unset." >&2
+    echo "              Source SET_VERTEX_MODE.sh (with your project id) first." >&2
+    exit 1
+  fi
+  if [[ -z "${CLOUD_ML_REGION:-}" ]]; then
+    echo "vertex_proxy: CLOUD_ML_REGION is unset." >&2
+    echo "              Source SET_VERTEX_MODE.sh (with your region) first." >&2
+    exit 1
+  fi
+  if [[ ! -f "${SCRIPT_DIR}/vertex_proxy.py" ]]; then
+    echo "vertex_proxy: ${SCRIPT_DIR}/vertex_proxy.py not found." >&2
+    exit 1
+  fi
+
+  # Per-instance port in the 38000-38999 range so concurrent sandboxes don't
+  # collide. Hashed from the instance name. Disjoint from fiss-mcp's 39xxx.
+  VERTEX_PORT_OFFSET=$(printf '%s' "${CLAUDE_SANDBOX_INSTANCE}" | cksum | awk '{print $1 % 1000}')
+  HOST_VERTEX_PORT="${VERTEX_PROXY_PORT:-$((38000 + VERTEX_PORT_OFFSET))}"
+
+  # Bind only to the docker bridge gateway IP — same model as fiss-mcp. Keeps
+  # the proxy off external interfaces (eth0, wlan0) without needing iptables.
+  VERTEX_BIND_IP="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+  if [[ -z "${VERTEX_BIND_IP}" ]]; then
+    echo "vertex_proxy: could not determine docker bridge gateway IP via" >&2
+    echo "              \`docker network inspect bridge\`. Refusing to bind 0.0.0.0." >&2
+    exit 1
+  fi
+
+  if (echo > "/dev/tcp/${VERTEX_BIND_IP}/${HOST_VERTEX_PORT}") 2>/dev/null; then
+    echo "vertex_proxy: ${VERTEX_BIND_IP}:${HOST_VERTEX_PORT} already in use." >&2
+    echo "              Set VERTEX_PROXY_PORT to a free port or stop the conflict." >&2
+    exit 1
+  fi
+
+  HOST_VERTEX_LOG="${SANDBOX_HOME}/.claude/host_vertex_proxy.log"
+  mkdir -p "$(dirname "${HOST_VERTEX_LOG}")"
+
+  VERTEX_PROXY_HOST="${VERTEX_BIND_IP}" \
+  VERTEX_PROXY_PORT="${HOST_VERTEX_PORT}" \
+  ANTHROPIC_VERTEX_PROJECT_ID="${ANTHROPIC_VERTEX_PROJECT_ID}" \
+  CLOUD_ML_REGION="${CLOUD_ML_REGION}" \
+  ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
+  nohup python3 "${SCRIPT_DIR}/vertex_proxy.py" \
+    > "${HOST_VERTEX_LOG}" 2>&1 &
+  HOST_VERTEX_PID=$!
+
+  echo -n "vertex_proxy: waiting for host server on ${VERTEX_BIND_IP}:${HOST_VERTEX_PORT} "
+  VREADY=0
+  for _ in $(seq 1 30); do
+    if (echo > "/dev/tcp/${VERTEX_BIND_IP}/${HOST_VERTEX_PORT}") 2>/dev/null; then
+      VREADY=1; echo " OK"; break
+    fi
+    echo -n "."; sleep 1
+  done
+  if [[ "$VREADY" != "1" ]]; then
+    echo " FAILED"
+    echo "vertex_proxy: server did not come up — last 20 lines of ${HOST_VERTEX_LOG}:" >&2
+    tail -20 "${HOST_VERTEX_LOG}" >&2 || true
+    exit 1
+  fi
+
+  VERTEX_BASE_URL_FOR_CONTAINER="http://host.docker.internal:${HOST_VERTEX_PORT}/v1"
+  echo "vertex_proxy: host server pid=${HOST_VERTEX_PID} url=${VERTEX_BASE_URL_FOR_CONTAINER}"
+fi
+
 # Loud warning when fiss-mcp is launching with write access. Writes can
 # submit workflows, mutate workspace attributes, and spend real money. The
 # banner below is pre-rendered figlet output (font: standard) baked into
@@ -333,6 +433,13 @@ docker run --rm -it \
   -e FISS_MCP="${FISS_MCP_ENABLED}" \
   -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
   -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
+  -e CLAUDE_CODE_USE_VERTEX="${VERTEX_ENABLED}" \
+  -e ANTHROPIC_VERTEX_PROJECT_ID="${ANTHROPIC_VERTEX_PROJECT_ID:-}" \
+  -e CLOUD_ML_REGION="${CLOUD_ML_REGION:-}" \
+  -e ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
+  -e CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" \
+  -e ANTHROPIC_VERTEX_BASE_URL="${VERTEX_BASE_URL_FOR_CONTAINER}" \
+  -e CLAUDE_CODE_SKIP_VERTEX_AUTH="${VERTEX_ENABLED}" \
   -w /workspace \
   claude-sandbox:latest /home/claude/start_script.sh "$@"
 
