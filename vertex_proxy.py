@@ -31,10 +31,14 @@ the Anthropic Messages body format unchanged, so no body translation is
 needed.
 """
 import http.server
+import itertools
 import json
 import os
+import re
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -108,18 +112,84 @@ def vertex_host(region: str) -> str:
     return f"{region}-aiplatform.googleapis.com"
 
 
+_req_counter = itertools.count(1)
+_log_lock = threading.Lock()
+
+
+def log(req_id: int, msg: str) -> None:
+    """Single-line log entry, thread-safe, with timestamp + request id."""
+    ts = time.strftime("%H:%M:%S")
+    with _log_lock:
+        sys.stderr.write(f"[{ts}] vertex_proxy[#{req_id}] {msg}\n")
+        sys.stderr.flush()
+
+
+def summarize_messages(messages):
+    """Return (count, last_user_snippet) for request logging."""
+    if not isinstance(messages, list):
+        return 0, ""
+    last_user = ""
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "user":
+            content = m.get("content")
+            if isinstance(content, str):
+                last_user = content
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        last_user = part.get("text", "")
+            # don't break — want the LAST user message
+    snippet = last_user.strip().replace("\n", " ")
+    if len(snippet) > 120:
+        snippet = snippet[:117] + "..."
+    return len(messages), snippet
+
+
+# Pull message id + usage out of streamed SSE events. Vertex sends standard
+# Anthropic SSE: event:message_start carries the message envelope (with id
+# and input_tokens); event:message_delta carries the final usage. We match on
+# the JSON payload rather than the SSE event lines so partial framing doesn't
+# trip us up.
+_SSE_MSG_START_ID = re.compile(rb'"type"\s*:\s*"message_start"[^}]*?"id"\s*:\s*"([^"]+)"', re.DOTALL)
+_SSE_MSG_START_ID_ALT = re.compile(rb'"id"\s*:\s*"(msg_[^"]+)"')
+_SSE_OUTPUT_TOKENS = re.compile(rb'"output_tokens"\s*:\s*(\d+)')
+_SSE_INPUT_TOKENS = re.compile(rb'"input_tokens"\s*:\s*(\d+)')
+
+
+def scan_sse_buffer(buf: bytes):
+    """Best-effort: extract (msg_id, input_tokens, output_tokens) from SSE bytes."""
+    msg_id = None
+    m = _SSE_MSG_START_ID.search(buf) or _SSE_MSG_START_ID_ALT.search(buf)
+    if m:
+        msg_id = m.group(1).decode("utf-8", errors="replace")
+    in_tok = None
+    out_tok = None
+    m = _SSE_INPUT_TOKENS.search(buf)
+    if m:
+        in_tok = int(m.group(1))
+    # output_tokens appears multiple times; the LAST occurrence is the final tally
+    out_matches = list(_SSE_OUTPUT_TOKENS.finditer(buf))
+    if out_matches:
+        out_tok = int(out_matches[-1].group(1))
+    return msg_id, in_tok, out_tok
+
+
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # Cut down on default access-log noise; errors still print via send_error.
         sys.stderr.write("vertex_proxy: " + (fmt % args) + "\n")
 
     def do_POST(self):
+        req_id = next(_req_counter)
+        t0 = time.monotonic()
+
         content_length = int(self.headers.get("Content-Length", 0))
         post_data = self.rfile.read(content_length)
 
         try:
             payload = json.loads(post_data)
         except json.JSONDecodeError:
+            log(req_id, f"ERR invalid JSON body ({content_length}B) from {self.client_address[0]}")
             self.send_error(400, "Invalid JSON payload")
             return
 
@@ -134,8 +204,20 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         clean_payload = sanitize_for_vertex(payload)
         forward_body = json.dumps(clean_payload).encode("utf-8")
 
+        msg_count, last_snippet = summarize_messages(payload.get("messages"))
+        tool_count = len(payload.get("tools") or [])
+        max_tok = payload.get("max_tokens")
+        log(
+            req_id,
+            f"REQ  path={self.path} model={model} stream={is_stream} "
+            f"msgs={msg_count} tools={tool_count} max_tokens={max_tok} "
+            f"body={len(forward_body)}B "
+            f'last_user="{last_snippet}"'
+        )
+
         token = get_gcp_token()
         if not token:
+            log(req_id, "ERR no GCP token (gcloud auth print-access-token failed)")
             self.send_error(500, "Failed to retrieve GCP credentials")
             return
 
@@ -152,31 +234,70 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(req) as response:
                 self.send_response(response.status)
+                upstream_req_id = None
                 for k, v in response.headers.items():
                     if k.lower() not in ("transfer-encoding", "content-length", "connection"):
                         self.send_header(k, v)
+                    # Vertex echoes a request id in either of these headers —
+                    # captures it for logging even when we can't parse a body id.
+                    if k.lower() in ("request-id", "x-request-id"):
+                        upstream_req_id = v
                 self.end_headers()
+
+                buf = bytearray()
+                BUF_CAP = 64 * 1024  # cap buffer; only need start_event + tail usage
+                total = 0
                 while True:
                     chunk = response.read(4096)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                    total += len(chunk)
+                    if len(buf) < BUF_CAP:
+                        buf.extend(chunk[: BUF_CAP - len(buf)])
+                    # For stream responses, also keep grabbing the tail so the
+                    # final message_delta with output_tokens lands in buf.
+                    if is_stream and len(chunk) < 4096:
+                        # likely near end; refresh tail window
+                        tail_keep = min(len(buf), 16 * 1024)
+                        buf = bytearray(bytes(buf)[-tail_keep:]) + bytearray(chunk)
+
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                msg_id, in_tok, out_tok = (None, None, None)
+                if is_stream:
+                    msg_id, in_tok, out_tok = scan_sse_buffer(bytes(buf))
+                else:
+                    try:
+                        body_json = json.loads(bytes(buf))
+                        msg_id = body_json.get("id")
+                        usage = body_json.get("usage") or {}
+                        in_tok = usage.get("input_tokens")
+                        out_tok = usage.get("output_tokens")
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
+                vertex_proof = "YES" if (msg_id or "").startswith(("msg_vrtx_", "req_vrtx_")) else "?"
+                log(
+                    req_id,
+                    f"RESP {response.status} {elapsed_ms}ms "
+                    f"id={msg_id} vertex={vertex_proof} "
+                    f"in_tok={in_tok} out_tok={out_tok} "
+                    f"upstream_req_id={upstream_req_id} bytes={total}"
+                )
         except urllib.error.HTTPError as e:
             err_body = e.read()
-            # Log the Vertex error so we can see which body field it rejected.
-            # Truncate the forwarded payload preview so the log stays readable.
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
             preview = forward_body[:800].decode("utf-8", errors="replace")
-            sys.stderr.write(
-                f"vertex_proxy: upstream HTTP {e.code} from {vertex_url}\n"
-                f"vertex_proxy:   request body (truncated): {preview}\n"
-                f"vertex_proxy:   response body: {err_body.decode('utf-8', errors='replace')}\n"
-            )
+            log(req_id, f"ERR upstream HTTP {e.code} in {elapsed_ms}ms from {vertex_url}")
+            log(req_id, f"     request body (truncated): {preview}")
+            log(req_id, f"     response body: {err_body.decode('utf-8', errors='replace')}")
             self.send_response(e.code)
             self.end_headers()
             self.wfile.write(err_body)
         except Exception as e:
-            sys.stderr.write(f"vertex_proxy: forwarding exception: {e}\n")
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            log(req_id, f"ERR forwarding exception in {elapsed_ms}ms: {e!r}")
             self.send_error(500, f"Proxy forwarding error: {e}")
 
 
