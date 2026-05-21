@@ -30,7 +30,16 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 # Default UID/GID baked at build. The runtime entrypoint
 # (uid-fixup-entrypoint.sh) remaps these to match the host invoker via
 # HOST_UID / HOST_GID env vars, so a single image is portable across hosts.
-RUN groupadd -g 1015 claude && \
+#
+# The base node:22-slim image ships a "node" user at UID 1000. If the host
+# invoker is also UID 1000 (typical first user on Ubuntu/Debian), usermod
+# would leave two passwd entries fighting for UID 1000 — getpwuid() then
+# returns "node" first, sudo sees the effective user as "node" instead of
+# "claude", and demands a password (NOPASSWD applies to claude only).
+# Delete the node user up front so the remap is unambiguous.
+RUN userdel -r node 2>/dev/null || true && \
+    groupdel node 2>/dev/null || true && \
+    groupadd -g 1015 claude && \
     useradd -m -u 1015 -g 1015 -s /bin/bash claude && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
     chmod 440 /etc/sudoers.d/claude && \
