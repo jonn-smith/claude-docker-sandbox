@@ -11,11 +11,6 @@
 #set -x
 ################################################################################
 
-# Amount of time Claude must work before considering sending you an
-# email with the completion status (seconds)
-THRESHOLD=120
-
-TIMESTAMP_FILE="${HOME}/claude_task_start_$(basename $PWD)"
 PROMPT_FILE="${HOME}/claude_task_prompt_$(basename $PWD)"
 
 # Must determine dynamically:
@@ -35,64 +30,64 @@ if [[ -z "$YOUR_EMAIL" ]]; then
   exit 0
 fi
 
-if [ ! -f "$TIMESTAMP_FILE" ]; then
-  echo "No timestamp file found, skipping"
-  exit 0
-fi
-
 ################################################################################
 
-START=$(cat "$TIMESTAMP_FILE")
 NOW=$(date +%s)
-ELAPSED=$((NOW - START))
-rm -f "$TIMESTAMP_FILE"
 
 PROMPT=$(cat "$PROMPT_FILE" 2>/dev/null || echo "(prompt unavailable)")
 rm -f "$PROMPT_FILE"
 
 PAYLOAD=$(cat)
-EVENT=$(echo "${PAYLOAD}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hook_event_name','Stop'))")
 
-if [ "$ELAPSED" -ge "$THRESHOLD" ]; then
+# Exit cleanly if the payload is empty
+if [ -z "$PAYLOAD" ]; then
+  exit 0
+fi
 
-  LAST_MESSAGE=$(echo "$PAYLOAD" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-print(data.get('last_assistant_message', ''))
-")
+# Use Python to diagnose the exact cause of the stop event.
+# Python will output a single line in the format: STATUS_CODE|DETAILED_MESSAGE
+DIAGNOSIS=$(echo "$PAYLOAD" | python3 -c '
+import sys, json
 
-  TRANSCRIPT_PATH=$(echo "$PAYLOAD" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-print(data.get('transcript_path', ''))
-")
-
-  BODY=$(python3 -c "
-import json, sys
-path = '$TRANSCRIPT_PATH'
 try:
-    with open(path) as f:
-        lines = []
-        for line in f:
-            msg = json.loads(line)
-            content = msg.get('content', '')
-            if msg.get('role') == 'assistant':
-                if isinstance(content, list):
-                    text = ' '.join(b.get('text','') for b in content if b.get('type') == 'text')
-                else:
-                    text = str(content)
-                if text.strip():
-                    lines.extend(text.strip().splitlines())
-    print('\n'.join(lines[-20:]))
-except Exception as e:
-    print(f'(could not read transcript: {e})')
-")
+    data = json.load(sys.stdin)
+    
+    # Extract fields safely
+    stop_reason = data.get("stop_reason") or data.get("stopReason") or ""
+    error = data.get("error") or {}
+    error_type = error.get("type", "")
+    error_msg = error.get("message", "")
+    
+    # 1. Check if maximum output token limit was hit
+    if stop_reason == "max_tokens":
+        print("MAX_TOKENS|Claude reached its maximum output token limit mid-task.")
+        
+    # 2. Check if it is a billing / credit exhaustion issue
+    elif error_type == "insufficient_quota" or "balance" in error_msg.lower():
+        print("QUOTA_EXHAUSTED|Claude ran out of account credits or API quota.")
+        
+    # 3. Check if it is any other type of failure (e.g., rate limits, network drops)
+    elif error_type or error_msg:
+        # Sanitize strings to prevent breaking Bash execution
+        clean_type = str(error_type).replace("|", "-").replace("\"", "\x27")
+        clean_msg = str(error_msg).replace("|", "-").replace("\"", "\x27")
+        print(f"OTHER_FAILURE|API Error [{clean_type}]: {clean_msg}")
+        
+    else:
+        print("NONE|")
 
-  SUBJECT_SUMMARY=$(echo "$LAST_MESSAGE" | head -1 | cut -c1-60)
-  if [[ "${EVENT}" == "Stop" ]] ; then
-    EVENT="Task Done"
-  fi
-  SUBJECT="[Claude] ${EVENT}: ${SUBJECT_SUMMARY} - pwd:$(basename $PWD) (${ELAPSED}s)"
+except Exception as e:
+    # Fail silently if JSON is corrupted or structural anomalies occur
+    print("NONE|")
+')
+
+# Split the Python output by the pipe delimiter into STATUS and MSG variables
+IFS='|' read -r STATUS MSG <<< "$DIAGNOSIS"
+
+# If an actionable status was returned, execute the alerts
+if [ "$STATUS" != "NONE" ] && [ -n "$STATUS" ]; then
+
+SUBJECT="[Claude] ${STATUS} pwd:$(basename $PWD)"
 
 curl smtp://${HOST_IP}:${SMTP_PORT} \
   --insecure \
@@ -105,15 +100,17 @@ Subject: ${SUBJECT}
 From: ${CLAUDE_FROM_ADDRESS}@${REAL_HOST_NAME}
 To: ${YOUR_EMAIL}
 
+${STATUS}
+${MSG}
+
 Project: $(basename $PWD)
-Duration: ${ELAPSED}s
 Prompt: ${PROMPT}
 
---- Last 20 lines of output ---
-${BODY}
+--- FULL PAYLOAD ---
 
-${LAST_MESSAGE}
+${PAYLOAD}
 
 EOF
 
 fi
+

@@ -114,6 +114,9 @@ ${BODY}
 
 ${LAST_MESSAGE}
 
+--- FULL PAYLOAD ---
+${PAYLOAD}
+
 EOF
 
 fi
