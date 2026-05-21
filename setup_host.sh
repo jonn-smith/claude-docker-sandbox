@@ -37,7 +37,6 @@ sudo systemctl start docker
 echo "Adding current user: ${USER} to docker group"
 getent group docker || sudo groupadd docker
 sudo usermod -aG docker $USER
-newgrp docker
 
 ################################################################################
 
