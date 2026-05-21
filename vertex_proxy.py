@@ -42,7 +42,7 @@ PROJECT_ID = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID") or os.environ.get("VE
 REGION = os.environ.get("CLOUD_ML_REGION") or os.environ.get("VERTEX_REGION")
 HOST = os.environ.get("VERTEX_PROXY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VERTEX_PROXY_PORT", "4000"))
-DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-7@20260416")
+DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-7")
 
 _PLACEHOLDERS = {"", "your-gcp-project-id", "YOUR_PROJECT_ID"}
 if not PROJECT_ID or PROJECT_ID in _PLACEHOLDERS:
@@ -77,8 +77,13 @@ def get_gcp_token():
 
 
 def vertex_host(region: str) -> str:
-    # Vertex AI's location-scoped endpoints follow {LOCATION}-aiplatform.googleapis.com,
-    # including LOCATION=global → global-aiplatform.googleapis.com.
+    # Regional endpoints follow {LOCATION}-aiplatform.googleapis.com, EXCEPT
+    # global which uses the bare aiplatform.googleapis.com host (location=global
+    # still appears in the URL path). The 'global-aiplatform.googleapis.com'
+    # host returns Google's generic 404 page — not a Vertex error — which
+    # claude-code surfaces as "model not available".
+    if region == "global":
+        return "aiplatform.googleapis.com"
     return f"{region}-aiplatform.googleapis.com"
 
 
@@ -99,13 +104,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         is_stream = bool(payload.get("stream", False))
         requested_model = payload.get("model", "") or ""
-        # claude-code may send a bare model id (e.g. "claude-opus-4-7") that
-        # isn't valid for Vertex; Vertex needs the @YYYYMMDD-suffixed id.
-        # Substitute the configured default when the request lacks a version.
-        if requested_model and "@" not in requested_model:
-            model = DEFAULT_MODEL
-        else:
-            model = requested_model or DEFAULT_MODEL
+        # Per Anthropic's Vertex docs, current models (Opus 4.6+, Sonnet 4.6+)
+        # use bare names on Vertex; only older models carry an @YYYYMMDD suffix.
+        # Pass the requested model through verbatim; fall back to DEFAULT_MODEL
+        # only when the request omits a model entirely.
+        model = requested_model or DEFAULT_MODEL
 
         token = get_gcp_token()
         if not token:
