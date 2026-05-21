@@ -76,6 +76,26 @@ def get_gcp_token():
         return None
 
 
+# Anthropic Messages fields that Vertex's :rawPredict schema accepts.
+# Vertex rejects any unknown body field with HTTP 400 "Extra inputs are
+# not permitted", so we whitelist rather than denylist — anything claude-code
+# or headroom adds outside this set (e.g. context_management, mcp_servers,
+# betas, container) gets dropped before forwarding. "model" is kept because
+# Vertex tolerates (and ignores) it; the URL path is authoritative.
+VERTEX_ALLOWED_FIELDS = frozenset({
+    "anthropic_version", "max_tokens", "messages", "system",
+    "stop_sequences", "stream", "temperature", "top_k", "top_p",
+    "metadata", "tools", "tool_choice", "thinking", "model",
+})
+
+
+def sanitize_for_vertex(payload: dict) -> dict:
+    """Strip unsupported fields and force the Vertex anthropic_version."""
+    clean = {k: v for k, v in payload.items() if k in VERTEX_ALLOWED_FIELDS}
+    clean["anthropic_version"] = "vertex-2023-10-16"
+    return clean
+
+
 def vertex_host(region: str) -> str:
     # Regional endpoints follow {LOCATION}-aiplatform.googleapis.com, EXCEPT
     # global which uses the bare aiplatform.googleapis.com host (location=global
@@ -110,6 +130,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         # only when the request omits a model entirely.
         model = requested_model or DEFAULT_MODEL
 
+        clean_payload = sanitize_for_vertex(payload)
+        forward_body = json.dumps(clean_payload).encode("utf-8")
+
         token = get_gcp_token()
         if not token:
             self.send_error(500, "Failed to retrieve GCP credentials")
@@ -121,7 +144,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             f"/locations/{REGION}/publishers/anthropic/models/{model}:{endpoint}"
         )
 
-        req = urllib.request.Request(vertex_url, data=post_data, method="POST")
+        req = urllib.request.Request(vertex_url, data=forward_body, method="POST")
         req.add_header("Authorization", f"Bearer {token}")
         req.add_header("Content-Type", "application/json")
 
