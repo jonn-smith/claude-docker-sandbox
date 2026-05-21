@@ -439,6 +439,7 @@ docker run --rm -it \
   "${MOUNTS[@]}" \
   --add-host=host.docker.internal:host-gateway \
   --runtime=sysbox-runc \
+	--gpus all \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
   -e HEADROOM="${HEADROOM:-0}" \
