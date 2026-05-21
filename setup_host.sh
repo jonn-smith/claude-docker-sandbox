@@ -31,7 +31,37 @@ EOF
 
 sudo apt update
 
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# Docker 29.x is incompatible with sysbox-runc (any version, including 0.6.7 and
+# 0.7.0): containers fail to start with
+#   OCI runtime create failed: namespace {"time" ""} does not exist
+# Upstream bug: https://github.com/nestybox/sysbox/issues/1011 (open, no fix).
+# Pin to the newest 5:28.* available in the repo and hold it so apt upgrade
+# won't silently break the sandbox. If no 28.x is available we abort rather
+# than install a known-broken combination.
+DOCKER_PIN_VERSION="$(apt-cache madison docker-ce 2>/dev/null \
+    | awk '{print $3}' \
+    | grep -E '^5:28\.' \
+    | sort -V \
+    | tail -n1 || true)"
+DOCKER_CLI_PIN_VERSION="$(apt-cache madison docker-ce-cli 2>/dev/null \
+    | awk '{print $3}' \
+    | grep -E '^5:28\.' \
+    | sort -V \
+    | tail -n1 || true)"
+
+if [[ -z "${DOCKER_PIN_VERSION}" || -z "${DOCKER_CLI_PIN_VERSION}" ]]; then
+  echo "ERROR: no docker-ce 28.x in the Docker apt repo for this distro." >&2
+  echo "Docker 29.x is incompatible with sysbox-runc (sysbox issue #1011)." >&2
+  echo "Cannot continue without a known-good Docker version." >&2
+  exit 1
+fi
+
+echo "Pinning docker-ce to ${DOCKER_PIN_VERSION} (Docker 29.x breaks sysbox-runc)."
+sudo apt install -y \
+  "docker-ce=${DOCKER_PIN_VERSION}" \
+  "docker-ce-cli=${DOCKER_CLI_PIN_VERSION}" \
+  containerd.io docker-buildx-plugin docker-compose-plugin
+sudo apt-mark hold docker-ce docker-ce-cli
 sudo systemctl start docker
 
 echo "Adding current user: ${USER} to docker group"
@@ -48,6 +78,23 @@ sudo apt install -y ./sysbox-ce_0.6.7-0.linux_amd64.deb
 #Verify:
 sudo docker info | grep -i runtime
 # Runtimes: io.containerd.runc.v2 runc sysbox-runc
+
+# Smoke test: confirm sysbox-runc can actually start a container. This catches
+# the Docker/sysbox version mismatch (sysbox issue #1011) and other runtime
+# breakage before the user hits it from run_claude_docker.sh.
+echo "Smoke-testing sysbox-runc with hello-world..."
+if ! sudo docker run --rm --runtime=sysbox-runc hello-world >/dev/null 2>&1; then
+  RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
+  echo
+  echo "${RED}ERROR:${RST} ${YEL}sysbox-runc smoke test failed.${RST}"
+  echo "${YEL}Re-run manually to see the error:${RST}"
+  echo "${YEL}    sudo docker run --rm --runtime=sysbox-runc hello-world${RST}"
+  echo "${YEL}If you see 'namespace {\"time\" \"\"} does not exist', your Docker is${RST}"
+  echo "${YEL}newer than what sysbox supports. See:${RST}"
+  echo "${YEL}    https://github.com/nestybox/sysbox/issues/1011${RST}"
+  exit 1
+fi
+echo "sysbox-runc smoke test passed."
 
 ################################################################################
 
