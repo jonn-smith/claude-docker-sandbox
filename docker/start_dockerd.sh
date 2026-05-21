@@ -11,6 +11,19 @@ set -euo pipefail
 
 LOG=/tmp/dockerd.log
 
+# Launcher sets SANDBOX_HAS_DIND=0 when the container is running under plain
+# runc (e.g. with --gpus all, since sysbox-runc has no GPU passthrough — see
+# nestybox/sysbox#50). Plain runc cannot mount overlay2 for a nested dockerd,
+# so don't even try; the daemon would just fail with
+#   "failed to mount overlay: operation not permitted"
+#   "error initializing graphdriver: driver not supported"
+if [[ "${SANDBOX_HAS_DIND:-1}" != "1" ]]; then
+  YEL=$'\033[1;33m'; RST=$'\033[0m'
+  echo "${YEL}dockerd: SKIPPED — container is not running under sysbox-runc.${RST}"
+  echo "${YEL}         Docker-in-Docker is disabled in this session.${RST}"
+  exit 0
+fi
+
 if [ -S /var/run/docker.sock ] && sudo docker info >/dev/null 2>&1; then
     echo "dockerd already reachable via /var/run/docker.sock"
     sudo docker version
