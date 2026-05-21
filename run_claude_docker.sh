@@ -429,6 +429,51 @@ BANNER
   sleep 2
 fi
 
+# Runtime + GPU selection.
+#
+# sysbox-runc gives us docker-in-docker, user-namespace remap, and stronger
+# isolation, but it does NOT support NVIDIA GPU passthrough
+# (https://github.com/nestybox/sysbox/issues/50). If the host has GPUs, fall
+# back to the default runc runtime and forward them with --gpus all.
+RUNTIME_FLAG=(--runtime=sysbox-runc)
+GPU_FLAGS=()
+HAVE_GPU=0
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+  HAVE_GPU=1
+fi
+
+# Don't switch runtimes if Docker has no 'nvidia' runtime registered — the
+# --gpus flag would just error out and we'd lose sysbox for no gain.
+if [[ "${HAVE_GPU}" == "1" ]]; then
+  if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+    RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
+    echo
+    echo "${YEL}WARNING: GPU detected but Docker has no 'nvidia' runtime registered.${RST}"
+    echo "${YEL}Install nvidia-container-toolkit and run:${RST}"
+    echo "${YEL}    sudo nvidia-ctk runtime configure --runtime=docker${RST}"
+    echo "${YEL}    sudo systemctl restart docker${RST}"
+    echo "${YEL}Falling back to sysbox-runc with NO GPU passthrough.${RST}"
+    echo
+    HAVE_GPU=0
+  fi
+fi
+
+if [[ "${HAVE_GPU}" == "1" ]]; then
+  RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
+  echo
+  echo "${YEL}========================================================================${RST}"
+  echo "${YEL}GPU DETECTED — switching container runtime from sysbox-runc to runc.${RST}"
+  echo "${YEL}    * --gpus all will be forwarded to the container${RST}"
+  echo "${YEL}    * docker-in-docker (DinD) inside the sandbox WILL NOT WORK${RST}"
+  echo "${YEL}    * user-namespace remap and extra sysbox isolation: DISABLED${RST}"
+  echo "${YEL}    * upstream issue: https://github.com/nestybox/sysbox/issues/50${RST}"
+  echo "${YEL}If you need DinD instead, hide nvidia-smi from PATH before launching.${RST}"
+  echo "${YEL}========================================================================${RST}"
+  echo
+  RUNTIME_FLAG=()
+  GPU_FLAGS=(--gpus all)
+fi
+
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
@@ -438,8 +483,8 @@ docker run --rm -it \
   --name "${CONTAINER_NAME}" \
   "${MOUNTS[@]}" \
   --add-host=host.docker.internal:host-gateway \
-  --runtime=sysbox-runc \
-	--gpus all \
+  "${RUNTIME_FLAG[@]}" \
+  "${GPU_FLAGS[@]}" \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
   -e HEADROOM="${HEADROOM:-0}" \
