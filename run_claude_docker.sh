@@ -301,15 +301,28 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   echo "fiss-mcp: host server pid=${HOST_FISS_PID} url=${FISS_MCP_URL_FOR_CONTAINER}"
 fi
 
-# Vertex AI proxy lifecycle. Activated when the parent shell has sourced
-# SET_VERTEX_MODE.sh, which exports CLAUDE_CODE_USE_VERTEX=1 along with
-# ANTHROPIC_VERTEX_PROJECT_ID, CLOUD_ML_REGION, and (optionally) ANTHROPIC_MODEL.
-# The sandbox container has no gcloud / google-cloud-* libs, so vertex_proxy.py
-# runs on the host and we route claude-code's Vertex calls through it via
-# ANTHROPIC_VERTEX_BASE_URL. CLAUDE_CODE_SKIP_VERTEX_AUTH=1 tells claude-code
-# to skip its own Google ADC lookup; the host proxy mints the access token.
+# Vertex AI proxy lifecycle (Option B — chained).
+#
+# Activated when the parent shell has sourced SET_VERTEX_MODE.sh, which
+# exports CLAUDE_CODE_USE_VERTEX=1 + ANTHROPIC_VERTEX_PROJECT_ID + CLOUD_ML_REGION.
+# Those env vars are LAUNCHER-side signals only — claude-code inside the
+# container runs in standard Anthropic mode, not Vertex SDK mode. We do not
+# forward CLAUDE_CODE_USE_VERTEX into the container.
+#
+# Flow:
+#   claude (in container, Anthropic mode)
+#     → headroom (in container, optional, when HEADROOM=1)
+#         (reads ANTHROPIC_TARGET_API_URL from env, forwards Anthropic-shape
+#          body to the host vertex_proxy at that URL)
+#     → vertex_proxy.py (on host, bound to docker bridge gateway IP)
+#         (strips incoming Authorization, mints fresh GCP token, rebuilds
+#          Vertex URL from project/region/model, forwards)
+#     → Vertex AI
+#
+# With HEADROOM=0, claude hits vertex_proxy directly via ANTHROPIC_BASE_URL
+# (set inside the container by start_script.sh when no headroom is running).
 VERTEX_ENABLED="${CLAUDE_CODE_USE_VERTEX:-0}"
-VERTEX_BASE_URL_FOR_CONTAINER=""
+VERTEX_PROXY_URL_FOR_CONTAINER=""
 HOST_VERTEX_LOG=""
 
 if [[ "$VERTEX_ENABLED" == "1" ]]; then
@@ -382,8 +395,11 @@ if [[ "$VERTEX_ENABLED" == "1" ]]; then
     exit 1
   fi
 
-  VERTEX_BASE_URL_FOR_CONTAINER="http://host.docker.internal:${HOST_VERTEX_PORT}/v1"
-  echo "vertex_proxy: host server pid=${HOST_VERTEX_PID} url=${VERTEX_BASE_URL_FOR_CONTAINER}"
+  # No /v1 suffix: Anthropic-SDK convention (and headroom's ANTHROPIC_TARGET_API_URL)
+  # is base URL only — clients append /v1/messages. The proxy ignores the path
+  # anyway, so it's purely about not confusing headroom's URL builder.
+  VERTEX_PROXY_URL_FOR_CONTAINER="http://host.docker.internal:${HOST_VERTEX_PORT}"
+  echo "vertex_proxy: host server pid=${HOST_VERTEX_PID} url=${VERTEX_PROXY_URL_FOR_CONTAINER}"
 fi
 
 # Loud warning when fiss-mcp is launching with write access. Writes can
@@ -433,13 +449,9 @@ docker run --rm -it \
   -e FISS_MCP="${FISS_MCP_ENABLED}" \
   -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
   -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
-  -e CLAUDE_CODE_USE_VERTEX="${VERTEX_ENABLED}" \
-  -e ANTHROPIC_VERTEX_PROJECT_ID="${ANTHROPIC_VERTEX_PROJECT_ID:-}" \
-  -e CLOUD_ML_REGION="${CLOUD_ML_REGION:-}" \
   -e ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
   -e CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" \
-  -e ANTHROPIC_VERTEX_BASE_URL="${VERTEX_BASE_URL_FOR_CONTAINER}" \
-  -e CLAUDE_CODE_SKIP_VERTEX_AUTH="${VERTEX_ENABLED}" \
+  -e ANTHROPIC_TARGET_API_URL="${VERTEX_PROXY_URL_FOR_CONTAINER}" \
   -w /workspace \
   claude-sandbox:latest /home/claude/start_script.sh "$@"
 

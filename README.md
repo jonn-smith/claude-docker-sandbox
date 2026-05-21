@@ -156,7 +156,20 @@ Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` / `FISS_MCP_PORT`
 
 ## Vertex AI mode (Google Cloud auth)
 
-The sandbox can route `claude` traffic through [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude) instead of the default Anthropic API. Same as fiss-mcp, the gcloud-shaped pieces (access-token mint, GCP service-account or ADC creds) stay on the **host** — the container has no `gcloud`, no `google-cloud-*` libs, and no `~/.config/gcloud` mount. A small host-side script (`vertex_proxy.py`) accepts Anthropic-shape POST bodies from `claude` inside the container, signs them with a fresh `gcloud auth print-access-token`, and forwards to Vertex.
+The sandbox can route `claude` traffic through [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude) instead of the default Anthropic API. Same security pattern as fiss-mcp: the gcloud-shaped pieces (access-token mint, GCP service-account or ADC creds) stay on the **host** — the container has no `gcloud`, no `google-cloud-*` libs, and no `~/.config/gcloud` mount. A small host-side script (`vertex_proxy.py`) accepts Anthropic-shape POST bodies, strips the incoming Authorization header, signs with a fresh `gcloud auth print-access-token`, and forwards to Vertex.
+
+**Architecture (Option B — chained, compression-compatible):**
+
+```
+claude (Anthropic mode, in container)
+   └─ ANTHROPIC_BASE_URL = headroom (when HEADROOM=1) or vertex_proxy (when HEADROOM=0)
+        └─ headroom (in container, optional)
+             └─ ANTHROPIC_TARGET_API_URL = vertex_proxy URL
+                  └─ vertex_proxy.py (on host, gcloud token mint)
+                       └─ Vertex AI
+```
+
+`claude` does **NOT** run in Vertex SDK mode. It stays in standard Anthropic mode, sending Anthropic-shape POST bodies. Vertex's `:rawPredict` endpoint accepts the Anthropic Messages body format unchanged, so no body translation is needed at any hop. The host proxy replaces the auth header — compression and routing stay orthogonal.
 
 **Activate**: copy the template, edit your project id, source it, launch:
 
@@ -164,10 +177,19 @@ The sandbox can route `claude` traffic through [Google Vertex AI](https://cloud.
 cp SET_VERTEX_MODE.example.sh SET_VERTEX_MODE.sh
 $EDITOR SET_VERTEX_MODE.sh           # set ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION
 source SET_VERTEX_MODE.sh
-./run_claude_docker.sh
+./run_claude_docker.sh               # optionally HEADROOM=1 for compression
 ```
 
-`SET_VERTEX_MODE.sh` is gitignored — your real project id won't accidentally land in a commit. To go back to default Anthropic-API mode, `source UNSET_VERTEX_MODE.sh` (or open a fresh shell).
+`SET_VERTEX_MODE.sh` is gitignored — your real project id won't accidentally land in a commit. To go back to default Anthropic-API (subscription) mode, `source UNSET_VERTEX_MODE.sh` (or open a fresh shell).
+
+**Toggle**: per-launch, not mid-session. claude reads env at startup. Different `env.<INSTANCE>.sh` files can pin different modes (one sandbox always Vertex, another always subscription).
+
+| HEADROOM | USE_VERTEX | Flow |
+|---|---|---|
+| 0 | 0 | claude → api.anthropic.com (OAuth, no compression) |
+| 1 | 0 | claude → headroom → api.anthropic.com (OAuth + compression) |
+| 0 | 1 | claude → vertex_proxy → Vertex (gcloud token, no compression) |
+| 1 | 1 | claude → headroom → vertex_proxy → Vertex (gcloud token + compression) |
 
 **Requires gcloud on the host**: the proxy mints OAuth tokens via `gcloud auth print-access-token`. `setup_host.sh` checks for `gcloud` on `PATH` at install time and prints a warning if missing — it does **not** install gcloud automatically (picking a distribution channel is a host-policy decision). On a workstation, install the SDK from your distro or [Google's instructions](https://cloud.google.com/sdk/docs/install), then:
 
@@ -182,9 +204,10 @@ The launcher refuses to start in Vertex mode if `gcloud` isn't on `PATH`, or if 
 
 1. Spawns `vertex_proxy.py` bound only to the docker bridge gateway IP, on a per-instance hashed port in `38000-38999` (disjoint from fiss-mcp's 39xxx range).
 2. Waits for it to come up, registers a trap on `EXIT INT TERM` so the proxy dies with the launcher.
-3. Forwards `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `ANTHROPIC_VERTEX_BASE_URL=http://host.docker.internal:<port>/v1`, and `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` into the container.
+3. Forwards `ANTHROPIC_TARGET_API_URL=http://host.docker.internal:<port>` into the container — that env var is read by **headroom** (`--backend anthropic` mode, the default) and overrides its upstream from `api.anthropic.com` to the host proxy.
+4. Also forwards `ANTHROPIC_MODEL` and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (orthogonal to Vertex). Does **not** forward `CLAUDE_CODE_USE_VERTEX` itself — that's a launcher-side signal only.
 
-The `SKIP_VERTEX_AUTH` flag is the load-bearing one: without it, `claude` inside the container tries to find Google ADC creds (which aren't there), and the launch fails. With it set, `claude` sends unauthenticated requests to the proxy, and the proxy attaches a bearer token from the host's gcloud session.
+When HEADROOM=0, `start_script.sh` instead sets `ANTHROPIC_BASE_URL=$ANTHROPIC_TARGET_API_URL` so `claude` bypasses the (absent) headroom and hits the host proxy directly.
 
 **Bind address**: same model as fiss-mcp — bridge gateway IP only, never `0.0.0.0`. Launcher fails fast if the bridge IP can't be determined.
 
@@ -194,7 +217,7 @@ The `SKIP_VERTEX_AUTH` flag is the load-bearing one: without it, `claude` inside
 
 **fiss-mcp and Vertex are orthogonal** — you can run both simultaneously (separate processes, separate port ranges, separate trap cleanups) or either alone.
 
-Per-instance default: add `CLAUDE_CODE_USE_VERTEX=1` and friends to `env.<INSTANCE>.sh` if you want a specific sandbox to always run in Vertex mode.
+Per-instance default: add `source SET_VERTEX_MODE.sh` at the top of `env.<INSTANCE>.sh` if you want a specific sandbox to always run in Vertex mode.
 
 ## Mounts
 
@@ -273,7 +296,7 @@ Paths are driven by environment variables — nothing is hardcoded in `run_claud
 - `CLAUDE_SANDBOX_HOME` — override the per-instance state dir (default: `claude-sandbox-persistent-state-<INSTANCE>/` alongside the launcher).
 - `CLAUDE_SANDBOX_SHARED` — override the shared dir in shared mode (default: `claude-sandbox-shared/`).
 
-Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, `CLAUDE_SANDBOX_USE_SHARED`, and the Vertex-mode vars (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `VERTEX_PROXY_PORT`) — set whichever you want sticky for that sandbox.
+Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, `CLAUDE_SANDBOX_USE_SHARED`, and the Vertex-mode launcher signals (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `VERTEX_PROXY_PORT`) — set whichever you want sticky for that sandbox.
 
 ## License
 

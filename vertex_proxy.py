@@ -3,10 +3,18 @@
 
 Why host-side: the sandbox container has NO gcloud / gsutil / google-cloud-*
 libs and NO ~/.config/gcloud mount. The only path to Vertex AI from inside
-the sandbox is this proxy. claude-code inside the container is pointed at
-this proxy via ANTHROPIC_VERTEX_BASE_URL + CLAUDE_CODE_SKIP_VERTEX_AUTH=1,
-so it sends Anthropic-shape POST bodies here and we sign them with a fresh
-gcloud access token, then forward to the real Vertex endpoint.
+the sandbox is this proxy.
+
+Architecture (Option B — chained):
+  claude-code (Anthropic mode) → headroom (in container, optional) → vertex_proxy (host) → Vertex AI
+
+claude-code runs in standard Anthropic mode (NOT CLAUDE_CODE_USE_VERTEX). The
+launcher forwards ANTHROPIC_TARGET_API_URL into the container pointing at
+this proxy. If HEADROOM=1, headroom compresses Anthropic-shape POST bodies
+then forwards to this proxy. If HEADROOM=0, claude hits this proxy directly
+via ANTHROPIC_BASE_URL. Either way, we strip any incoming Authorization
+header, mint a fresh GCP access token, rebuild the Vertex URL from env +
+request-body "model", and forward.
 
 Config (all via env, matching the variables exported by SET_VERTEX_MODE.sh
 so the same shell that launches claude-code configures the proxy):
@@ -16,9 +24,11 @@ so the same shell that launches claude-code configures the proxy):
   VERTEX_PROXY_PORT            Bind port    (default 4000)
   ANTHROPIC_MODEL              Default model to fall through if request omits
 
-The proxy ignores the incoming URL path entirely: claude-code's Vertex SDK
-appends /projects/.../models/{m}:rawPredict to the base URL, but we rebuild
-the upstream URL from the env + the request body's "model" field anyway.
+The proxy ignores the incoming URL path entirely: clients send Anthropic
+shapes like /v1/messages, but we rebuild the Vertex URL from env + the
+request body's "model" field anyway. Vertex's :rawPredict endpoint accepts
+the Anthropic Messages body format unchanged, so no body translation is
+needed.
 """
 import http.server
 import json

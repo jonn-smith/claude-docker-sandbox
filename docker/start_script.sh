@@ -7,10 +7,24 @@ service postfix start
 # Start the docker service so we can run docker in a docker for tests:
 ~/start_dockerd.sh
 
+# Vertex routing signal (Option B). When the host launcher spawned
+# vertex_proxy.py and forwarded its URL via ANTHROPIC_TARGET_API_URL, that
+# becomes the upstream for Anthropic-shape traffic instead of api.anthropic.com.
+# Headroom (when on) natively reads ANTHROPIC_TARGET_API_URL via its
+# --backend anthropic / --anthropic-api-url path, so we just export it and
+# the headroom spawn below picks it up. With headroom OFF we point claude at
+# vertex_proxy directly via ANTHROPIC_BASE_URL further down.
+if [[ -n "${ANTHROPIC_TARGET_API_URL:-}" ]]; then
+  export ANTHROPIC_TARGET_API_URL
+  echo "vertex routing: ON  upstream=${ANTHROPIC_TARGET_API_URL}"
+fi
+
 # Headroom proxy (opt-in, set HEADROOM=1 at launch).
 # When on, intercepts Claude Code traffic on localhost:$HEADROOM_PORT and
-# compresses prompts/tool outputs before forwarding to api.anthropic.com.
-# Process dies with the container; no persistent state.
+# compresses prompts/tool outputs before forwarding upstream — either to
+# api.anthropic.com (default) or to the URL in ANTHROPIC_TARGET_API_URL when
+# the launcher set one (Vertex mode). Process dies with the container; no
+# persistent state.
 HEADROOM_PORT="${HEADROOM_PORT:-8787}"
 if [[ "${HEADROOM:-0}" == "1" ]]; then
   if ! command -v headroom >/dev/null 2>&1; then
@@ -38,7 +52,14 @@ if [[ "${HEADROOM:-0}" == "1" ]]; then
   export ANTHROPIC_BASE_URL="http://127.0.0.1:${HEADROOM_PORT}"
   echo "headroom: ON  ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}"
 else
-  echo "headroom: OFF"
+  if [[ -n "${ANTHROPIC_TARGET_API_URL:-}" ]]; then
+    # No headroom layer — claude talks to vertex_proxy directly. Skip the
+    # compression step but keep the gcloud-token-on-host routing.
+    export ANTHROPIC_BASE_URL="${ANTHROPIC_TARGET_API_URL}"
+    echo "headroom: OFF  vertex direct  ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}"
+  else
+    echo "headroom: OFF"
+  fi
 fi
 
 # fiss-mcp (Terra MCP). Server lives on the HOST; the launcher (run script)
