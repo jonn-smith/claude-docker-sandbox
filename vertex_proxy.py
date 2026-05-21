@@ -80,12 +80,13 @@ def get_gcp_token():
 # Vertex rejects any unknown body field with HTTP 400 "Extra inputs are
 # not permitted", so we whitelist rather than denylist — anything claude-code
 # or headroom adds outside this set (e.g. context_management, mcp_servers,
-# betas, container) gets dropped before forwarding. "model" is kept because
-# Vertex tolerates (and ignores) it; the URL path is authoritative.
+# betas, container, model) gets dropped before forwarding. Note: "model"
+# is intentionally excluded — Vertex requires model in the URL path only
+# and rejects it in the body.
 VERTEX_ALLOWED_FIELDS = frozenset({
     "anthropic_version", "max_tokens", "messages", "system",
     "stop_sequences", "stream", "temperature", "top_k", "top_p",
-    "metadata", "tools", "tool_choice", "thinking", "model",
+    "metadata", "tools", "tool_choice", "thinking",
 })
 
 
@@ -162,10 +163,20 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
                     self.wfile.flush()
         except urllib.error.HTTPError as e:
+            err_body = e.read()
+            # Log the Vertex error so we can see which body field it rejected.
+            # Truncate the forwarded payload preview so the log stays readable.
+            preview = forward_body[:800].decode("utf-8", errors="replace")
+            sys.stderr.write(
+                f"vertex_proxy: upstream HTTP {e.code} from {vertex_url}\n"
+                f"vertex_proxy:   request body (truncated): {preview}\n"
+                f"vertex_proxy:   response body: {err_body.decode('utf-8', errors='replace')}\n"
+            )
             self.send_response(e.code)
             self.end_headers()
-            self.wfile.write(e.read())
+            self.wfile.write(err_body)
         except Exception as e:
+            sys.stderr.write(f"vertex_proxy: forwarding exception: {e}\n")
             self.send_error(500, f"Proxy forwarding error: {e}")
 
 
