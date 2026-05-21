@@ -72,7 +72,10 @@ Approximate image size: ~3 GB.
 
 ## Prerequisites
 
-- Docker (tested on Docker 29.x).
+- Docker 28.x. Docker 29.x is **not** compatible with sysbox-runc —
+  containers fail with `namespace {"time" ""} does not exist`
+  ([sysbox#1011](https://github.com/nestybox/sysbox/issues/1011)).
+  `setup_host.sh` pins docker-ce to the newest 28.x and holds it.
 - A working Claude Code install on the host with OAuth credentials at `~/.claude/.credentials.json`. Obtain by running `claude` on the host once and completing `/login`.
 
 ## Build
