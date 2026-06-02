@@ -389,7 +389,68 @@ build_all_caches() {
         session_header_sep
     } > "$PREVIEW_CACHE_DIR/sessions.header"
     write_view_helpers
+    write_flag_previews
     printf '  ready.\n' >&2
+}
+
+# Per-flag preview text shown in menu-2's right pane when a flag row is
+# highlighted. Source of truth for what each flag actually does at launch.
+write_flag_previews() {
+    cat > "$PREVIEW_CACHE_DIR/flag.headroom.txt" <<'TXT'
+HEADROOM
+token compression proxy
+
+When ON:
+  Container starts a local proxy that compresses the conversation
+  context before it hits the Anthropic API. Saves input tokens on
+  long sessions at the cost of some fidelity.
+
+env var:
+  HEADROOM=1
+TXT
+
+    cat > "$PREVIEW_CACHE_DIR/flag.vertex.txt" <<'TXT'
+VERTEX AI
+route Anthropic API calls through Google Cloud Vertex AI
+
+When ON (sources SET_VERTEX_MODE.sh):
+  CLAUDE_CODE_USE_VERTEX=1
+  ANTHROPIC_VERTEX_PROJECT_ID=broad-dsde-methods
+  CLOUD_ML_REGION=global
+  ANTHROPIC_MODEL=claude-opus-4-7
+  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+
+Billing:
+  Charges land on the broad-dsde-methods GCP project, NOT your
+  personal Anthropic account. Use this when you want the spend on
+  the lab budget instead of personal credits.
+
+When OFF:
+  CLAUDE_CODE_USE_VERTEX / ANTHROPIC_VERTEX_PROJECT_ID /
+  CLOUD_ML_REGION are unset → SDK falls back to api.anthropic.com.
+TXT
+
+    cat > "$PREVIEW_CACHE_DIR/flag.fiss_writes.txt" <<'TXT'
+FISS-MCP writes
+allow the agent to mutate Terra / GCP state
+
+When OFF (default):
+  Host-side fiss-mcp server runs in read-only mode. Agent can
+  read workspace metadata, list submissions, fetch logs — but
+  cannot submit workflows, change workspace attributes, or
+  otherwise spend money.
+
+When ON:
+  fiss-mcp launches with FISS_MCP_ALLOW_WRITES=1. Agent can:
+    - submit/abort workflow runs in Terra
+    - mutate workspace and data-table attributes
+    - upload entities
+  → real money on Terra / GCP. Red banners print on both host
+    and container at startup as a reminder.
+
+env var:
+  FISS_MCP_ALLOW_WRITES=1
+TXT
 }
 
 # --- step 1: area picker -----------------------------------------------------
@@ -419,6 +480,7 @@ pick_area() {
             --prompt='  Sandbox  ' \
             --header=$'claude-sandbox  ·  area picker\n↑/↓ navigate  ·  ENTER select  ·  ESC quit  ·  CTRL-C quit\n"*" suffix = currently running' \
             --header-lines=3 \
+            --bind='enter:accept-non-empty' \
             --preview="$preview_cmd" \
             --preview-window='right,55%,wrap,border-rounded' \
             --height=90% \
@@ -551,10 +613,10 @@ pick_session() {
     local preview_cmd
     preview_cmd='row={};
 case "$row" in
-    *Headroom*|*"Vertex AI"*|*"FISS-MCP writes"*)
-        printf "Flag row — ENTER to toggle"; exit 0 ;;
-    *"── Flags ──"*|"")
-        printf "(separator)"; exit 0 ;;
+    *Headroom*)            cat "$PREVIEW_CACHE_DIR/flag.headroom.txt"; exit 0 ;;
+    *"Vertex AI"*)         cat "$PREVIEW_CACHE_DIR/flag.vertex.txt"; exit 0 ;;
+    *"FISS-MCP writes"*)   cat "$PREVIEW_CACHE_DIR/flag.fiss_writes.txt"; exit 0 ;;
+    *"── Flags ──"*|"")    printf "(separator)"; exit 0 ;;
 esac
 uuid=$(printf "%s" "$row" | sed -E "s/^│ [^│]+ │ +([^ ]+) +│.*/\1/")
 [ -z "$uuid" ] || [ "$uuid" = "$row" ] && { printf "(no summary)"; exit 0; }
@@ -572,6 +634,7 @@ cat "$PREVIEW_CACHE_DIR/session.$uuid.txt" 2>/dev/null || printf "(no summary)"'
                 --prompt='  Session  ' \
                 --header="$(printf 'claude-sandbox  ·  %s  ·  pick session + flags\n↑/↓ navigate  ·  RIGHT to flags  ·  LEFT to sessions  ·  ENTER act  ·  ESC back  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
                 --header-lines=3 \
+                --bind='enter:accept-non-empty' \
                 --bind="right:pos(-3)" \
                 --bind="left:pos(1)" \
                 --preview="$preview_cmd" \
