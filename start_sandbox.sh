@@ -74,23 +74,20 @@ fzf_pick() {
 
 # --- styling -----------------------------------------------------------------
 #
-# Claude-CLI-ish amber palette + rounded borders. fzf does full-row highlight
-# by default (bg+); we just lean into it with a contrasting selected bg and an
-# arrow pointer. ANSI hex colors work in any 24-bit terminal; older terms get
-# the closest 256-color fallback automatically.
-
-# Common fzf flags shared by every picker so they look like a set.
+# Dracula-ish purple palette (chosen interactively via palette_preview.sh)
+# with a solid red bar for the current row.
 #
-# Palette uses xterm-256 indices, no style modifiers, and one
-# attribute per --color flag. Hex colors (#rrggbb) require fzf 0.32+;
-# `:bold` / `:italic` modifiers require fzf 0.31+. When fzf rejects any
-# token in a bundled `--color=a:x,b:y` string it silently falls back to
-# its defaults — which is why earlier attempts produced a blue header
-# and a grey selection bar. Splitting one attribute per flag means at
-# most one entry gets dropped on older fzf instead of the whole theme.
+# Palette uses xterm-256 indices, no style modifiers, and one attribute per
+# --color flag. Hex colors (#rrggbb) require fzf 0.32+; `:bold` / `:italic`
+# modifiers require fzf 0.31+. When fzf rejects any token in a bundled
+# `--color=a:x,b:y` string it silently falls back to defaults — which is
+# why earlier hex+modifier attempts produced a blue header and a grey
+# selection bar. Splitting one attribute per flag means at most one entry
+# gets dropped on older fzf instead of the whole theme.
 #
-# Selection contrast: bg+ uses bright orange (208) with near-black fg+
-# (232) — the current row should be unmissable, not merely bold.
+# Selection contrast: bg+ uses red (124) with cream fg+ (230). fzf
+# extends bg+ across the full terminal width for the current row, so the
+# selection reads as a solid bar, not just bolded text.
 FZF_THEME=(
     --border=rounded
     --pointer='▶'
@@ -99,20 +96,20 @@ FZF_THEME=(
     --layout=reverse
     --no-mouse
     --cycle
-    --color=border:214
-    --color=label:214
-    --color=header:215
-    --color=prompt:214
+    --color=border:141
+    --color=label:141
+    --color=header:117
+    --color=prompt:117
     --color=query:230
-    --color=pointer:232
-    --color=marker:232
+    --color=pointer:230
+    --color=marker:230
     --color=info:240
-    --color=spinner:214
-    --color=fg:230
-    --color=fg+:232
-    --color=bg+:208
-    --color=hl:215
-    --color=hl+:88
+    --color=spinner:141
+    --color=fg:252
+    --color=fg+:230
+    --color=bg+:124
+    --color=hl:141
+    --color=hl+:230
 )
 
 # Column widths (so the area-picker rows align as a real ASCII table).
@@ -307,7 +304,7 @@ pick_area() {
             printf '%s\n' "${AREA_ROWS[@]}"
         } | fzf_pick \
             --prompt='  Sandbox  ' \
-            --header='claude-sandbox · ↑/↓ navigate · ENTER select · ESC quit · CTRL-C quit · "*" = running' \
+            --header=$'claude-sandbox  ·  area picker\n↑/↓ navigate  ·  ENTER select  ·  ESC quit  ·  CTRL-C quit\n"*" suffix = currently running' \
             --header-lines=3 \
             --preview="$preview_cmd" \
             --preview-window='right,55%,wrap,border-rounded' \
@@ -378,7 +375,7 @@ pick_toggles() {
                 toggle_bot
             } | fzf_pick \
                 --prompt='  Toggle  ' \
-                --header="claude-sandbox · ${CHOSEN_AREA} · ENTER flip/launch · ESC back · CTRL-C quit" \
+                --header="$(printf 'claude-sandbox  ·  %s  ·  flags\nENTER flip toggle / launch  ·  ESC back to areas  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
                 --header-lines=3 \
                 --no-multi \
                 --height=50% \
@@ -493,7 +490,7 @@ pick_session() {
             printf '%s\n' "${SESSION_ROWS[@]}"
         } | fzf_pick \
             --prompt='  Session  ' \
-            --header="claude-sandbox · ${CHOSEN_AREA} · ENTER select · ESC back · CTRL-C quit" \
+            --header="$(printf 'claude-sandbox  ·  %s  ·  pick session\nENTER select  ·  ESC back to flags  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
             --header-lines=3 \
             --height=80% \
             "${FZF_THEME[@]}"
