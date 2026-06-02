@@ -218,6 +218,66 @@ sb_list_sessions() {
     shopt -u nullglob
 }
 
+# --- workdir tracking --------------------------------------------------------
+#
+# Each session's host-side working directory (the path bind-mounted at
+# /workspace in the container) is recorded in a tiny sidecar file next to
+# the jsonl: "<state_dir>/<project>/<uuid>.workdir". Single line, the
+# absolute host path. Empty/missing = unknown (legacy session, pre-tracking).
+#
+# Why sidecar rather than parsing the jsonl: claude records cwd as the
+# CONTAINER path "/workspace" — the host path it was mounted from is not
+# present in the session record. The launcher knows it and stamps it.
+
+# Read the sidecar for a jsonl. Prints the workdir or nothing.
+sb_session_workdir() {
+    local jsonl=$1
+    local sidecar="${jsonl%.jsonl}.workdir"
+    [ -r "$sidecar" ] || return 0
+    # head -n1 isn't safe — a sidecar with no trailing newline is fine for
+    # bash read but `cat` would also work. Trim whitespace.
+    local w
+    IFS= read -r w < "$sidecar" || true
+    printf '%s' "$w"
+}
+
+# Write the sidecar for a jsonl. Creates the sidecar with the given workdir.
+# No-op if jsonl path is empty.
+sb_write_session_workdir() {
+    local jsonl=$1 workdir=$2
+    [ -n "$jsonl" ] || return 0
+    local sidecar="${jsonl%.jsonl}.workdir"
+    printf '%s\n' "$workdir" > "$sidecar"
+}
+
+# Parse all env.*.sh files for `export CLAUDE_SANDBOX_PROJECTS_DIR=...` lines
+# (active OR commented) and emit the resolved paths, one per line.
+#
+# Substitutes ${__ENV_SCRIPT_DIR} → the script dir argument so paths under
+# the repo expand properly. Skips env.example.sh.
+sb_collect_env_workdirs() {
+    local script_dir=$1
+    shopt -s nullglob
+    local f
+    for f in "$script_dir"/env.*.sh; do
+        local base name
+        base=$(basename "$f" .sh)
+        name=${base#env.}
+        [ "$name" = "example" ] && continue
+        # Match: optional leading "#" + ws, then "export ", then VAR=value.
+        # Strip leading "#", strip "export ", strip surrounding quotes from value.
+        sed -nE 's/^[[:space:]]*#?[[:space:]]*export[[:space:]]+CLAUDE_SANDBOX_PROJECTS_DIR=(.*)$/\1/p' "$f" \
+            | sed -E 's/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/' \
+            | while IFS= read -r raw; do
+                # Expand ${__ENV_SCRIPT_DIR} → $script_dir; leave other vars alone.
+                raw=${raw//\$\{__ENV_SCRIPT_DIR\}/$script_dir}
+                raw=${raw//\$__ENV_SCRIPT_DIR/$script_dir}
+                [ -n "$raw" ] && printf '%s\n' "$raw"
+            done
+    done
+    shopt -u nullglob
+}
+
 # Is a sandbox area currently running? Echoes container id if so, else nothing.
 sb_running_cid() {
     local instance=$1

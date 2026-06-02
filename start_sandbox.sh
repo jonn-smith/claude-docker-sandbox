@@ -35,6 +35,13 @@ source "$SCRIPT_DIR/scripts/sandbox_lib.sh"
 MARK_BEGIN="# vvv start_sandbox managed block — regenerated, do not edit vvv"
 MARK_END="# ^^^ start_sandbox managed block ^^^"
 
+# Master workdir registry. Plain text, one absolute host path per line. Seeded
+# from every env.<area>.sh `export CLAUDE_SANDBOX_PROJECTS_DIR=...` line (both
+# active and commented out) on first run; thereafter every chosen workdir is
+# unioned in. This is the "master coordinating location" — the list of paths
+# this host knows it can mount at /workspace.
+WORKDIRS_FILE="$SCRIPT_DIR/workdirs.txt"
+
 command -v fzf >/dev/null 2>&1 || {
     echo "fzf is required. Install: sudo apt-get install -y fzf" >&2
     exit 1
@@ -164,6 +171,38 @@ flag_badge() {
 # Render a horizontal rule of n cells using a given char (e.g. '─').
 hrule() { local w=$1 ch=${2:-─}; printf '%*s' "$w" '' | tr ' ' "$ch"; }
 
+# --- workdir registry --------------------------------------------------------
+#
+# Maintain $WORKDIRS_FILE as union(existing file, env.<area>.sh parsed paths).
+# Sorted, unique. Idempotent: running twice with no env changes produces no
+# diff. Writes only if content changed (avoids meaningless mtime bumps).
+sync_workdirs_registry() {
+    local tmp existing parsed
+    tmp=$(mktemp)
+    existing=""
+    [ -r "$WORKDIRS_FILE" ] && existing=$(cat "$WORKDIRS_FILE")
+    parsed=$(sb_collect_env_workdirs "$SCRIPT_DIR")
+    printf '%s\n%s\n' "$existing" "$parsed" \
+        | awk 'NF && !seen[$0]++' \
+        | sort > "$tmp"
+    if ! [ -r "$WORKDIRS_FILE" ] || ! cmp -s "$tmp" "$WORKDIRS_FILE"; then
+        mv "$tmp" "$WORKDIRS_FILE"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# Add a single path to the registry. Idempotent.
+register_workdir() {
+    local path=$1
+    [ -n "$path" ] || return 0
+    if [ -r "$WORKDIRS_FILE" ] && grep -qxF "$path" "$WORKDIRS_FILE"; then
+        return 0
+    fi
+    printf '%s\n' "$path" >> "$WORKDIRS_FILE"
+    sort -u "$WORKDIRS_FILE" -o "$WORKDIRS_FILE"
+}
+
 # --- area discovery ----------------------------------------------------------
 
 shopt -s nullglob
@@ -285,9 +324,14 @@ build_session_cache() {
     : > "$rows_file"
     : > "$uuids_file"
 
+    # Parallel file: workdir per session row, so the launcher can look it up
+    # without re-reading the sidecar after the pick. NEW SESSION → empty line.
+    local wdirs_file="$PREVIEW_CACHE_DIR/sessions.${area}.workdirs"
+    : > "$wdirs_file"
+
     local state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}/.claude/projects"
     if [ -d "$state_dir" ]; then
-        local mt f uuid age name desc_full short
+        local mt f uuid age name desc_full short workdir wd_short
         while IFS=$'\t' read -r mt f; do
             uuid=$(basename "$f" .jsonl)
             age=$(sb_fmt_age $((now - mt)))
@@ -298,16 +342,26 @@ build_session_cache() {
             [ -z "$name" ] && name='(unnamed)'
             short=$desc_full
             [ ${#short} -gt 80 ] && short="${short:0:79}…"
-            session_row "$name" "$uuid" "$age" "$short" >> "$rows_file"
+            workdir=$(sb_session_workdir "$f")
+            # Display: empty sidecar → "(unknown)" so the user can see which
+            # sessions predate workdir tracking.
+            wd_short=${workdir:-'(unknown)'}
+            session_row "$wd_short" "$uuid" "$age" "$short" >> "$rows_file"
             printf '%s\n' "$uuid" >> "$uuids_file"
+            printf '%s\n' "$workdir" >> "$wdirs_file"
             {
-                printf 'Last session summary\n\n'
+                printf 'Workdir:  %s\n' "${workdir:-(unknown — legacy session)}"
+                printf 'Name:     %s\n' "$name"
+                printf 'UUID:     %s\n' "$uuid"
+                printf 'Age:      %s\n' "$age"
+                printf '\nSummary\n\n'
                 printf '%s\n' "$desc_full"
             } > "$PREVIEW_CACHE_DIR/session.${uuid:0:8}.txt"
         done < <(sb_list_sessions "$state_dir" | sort -rn | head -30)
     fi
     session_row "▶ NEW SESSION" "" "" "Start a fresh conversation" >> "$rows_file"
     printf 'NEW\n' >> "$uuids_file"
+    printf '\n' >> "$wdirs_file"
 }
 
 # Two helper scripts that back the menu-2 list. They live on disk so the
@@ -369,6 +423,8 @@ build_all_caches() {
     n=${#AREAS[@]}
     printf 'start_sandbox: indexing %d sandbox(es), this is slow because\n' "$n" >&2
     printf '  each docker check + per-session JSON parse is a fork...\n' >&2
+    printf '  syncing workdir registry from env files...\n' >&2
+    sync_workdirs_registry
     printf '  scanning docker for running containers...\n' >&2
     now=$(date +%s)
     running_set=" $(sb_running_areas | tr '\n' ' ') "
@@ -554,22 +610,26 @@ persist_toggles() {
 
 # --- step 3: session picker --------------------------------------------------
 
-SW_NAME=22
+# Row columns. WORKDIR is the primary identifier (sessions are coupled to a
+# workdir at launch time, recorded in a sidecar). NAME (custom-title) is
+# rarely set in practice and would waste a column — surfaced in the preview
+# pane instead.
+SW_WORKDIR=28
 SW_UUID=8
 SW_AGE=10
-SW_SUMMARY=44
+SW_SUMMARY=40
 
 session_row() {
-    local name=$1 uuid=$2 age=$3 summary=$4
+    local workdir=$1 uuid=$2 age=$3 summary=$4
     printf '│ %-*s │ %-*s │ %-*s │ %-*s │\n' \
-        "$SW_NAME"    "$(trim_right "$name"    "$SW_NAME")" \
+        "$SW_WORKDIR" "$(trim_left  "$workdir" "$SW_WORKDIR")" \
         "$SW_UUID"    "${uuid:0:SW_UUID}" \
         "$SW_AGE"     "$age" \
         "$SW_SUMMARY" "$(trim_right "$summary" "$SW_SUMMARY")"
 }
-session_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─╮\n' "$(hrule $SW_NAME)" "$(hrule $SW_UUID)" "$(hrule $SW_AGE)" "$(hrule $SW_SUMMARY)"; }
-session_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $SW_NAME)" "$(hrule $SW_UUID)" "$(hrule $SW_AGE)" "$(hrule $SW_SUMMARY)"; }
-session_header_labels(){ session_row "NAME" "UUID" "LAST" "SUMMARY"; }
+session_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─╮\n' "$(hrule $SW_WORKDIR)" "$(hrule $SW_UUID)" "$(hrule $SW_AGE)" "$(hrule $SW_SUMMARY)"; }
+session_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $SW_WORKDIR)" "$(hrule $SW_UUID)" "$(hrule $SW_AGE)" "$(hrule $SW_SUMMARY)"; }
+session_header_labels(){ session_row "WORKDIR" "UUID" "LAST" "SUMMARY"; }
 
 # Combined session + flags picker. The fzf list is a single column
 # produced by view.sh: per-area session rows on top, a visual separator,
@@ -594,6 +654,7 @@ pick_session() {
     local toggle_file="$PREVIEW_CACHE_DIR/toggles.${CHOSEN_AREA}"
     local sess_rows="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.rows"
     local sess_uuids="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.uuids"
+    local sess_wdirs="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.workdirs"
     local hdr_file="$PREVIEW_CACHE_DIR/sessions.header"
     local view_sh="$PREVIEW_CACHE_DIR/bin/view.sh"
     local flip_sh="$PREVIEW_CACHE_DIR/bin/flip.sh"
@@ -605,6 +666,11 @@ pick_session() {
     IFS='|' read -r _pd INITIAL_HR INITIAL_FW INITIAL_VX <<<"$flags"
     HR=$INITIAL_HR; VX=$INITIAL_VX; FW=$INITIAL_FW
     printf '%d %d %d\n' "$HR" "$VX" "$FW" > "$toggle_file"
+
+    # Drop any workdir picked on a prior pass through this menu — the next
+    # selection sets it fresh (sidecar value for existing sessions, empty
+    # for NEW SESSION → triggers pick_workdir).
+    CHOSEN_WORKDIR=""
 
     # Right-pane preview: parse uuid8 from row column 2; cat the matching
     # per-session summary file. Non-session rows (flag rows / separator) have
@@ -655,23 +721,85 @@ cat "$PREVIEW_CACHE_DIR/session.$uuid.txt" 2>/dev/null || printf "(no summary)"'
                 ;;
         esac
 
-        # Session row — resolve to UUID via parallel walk of rows/uuids files.
-        local line uuid="" found=""
+        # Session row — resolve to UUID + workdir via parallel walk of three
+        # cache files (rows / uuids / workdirs). Workdir is empty for the
+        # NEW SESSION sentinel row and for any legacy session without a
+        # sidecar; both cases trigger pick_workdir() downstream.
+        local line uuid="" workdir="" found=""
         while IFS= read -r line; do
             IFS= read -r uuid <&3 || true
+            IFS= read -r workdir <&4 || true
             if [ "$line" = "$row" ]; then
                 found=$uuid
                 break
             fi
-        done < "$sess_rows" 3< "$sess_uuids"
+        done < "$sess_rows" 3< "$sess_uuids" 4< "$sess_wdirs"
 
         if [ -z "$found" ]; then
             echo "ERROR: could not resolve session UUID from row '$row'." >&2
             return 130
         fi
         CHOSEN_SESSION=$found
+        CHOSEN_WORKDIR=$workdir
         return 0
     done
+}
+
+# --- step 4: workdir picker --------------------------------------------------
+#
+# Triggered after pick_session when the chosen row has no recorded workdir
+# (NEW SESSION sentinel, or legacy session whose sidecar is missing). The
+# user picks from the master registry $WORKDIRS_FILE; the "+ enter new path"
+# sentinel drops to a free-text prompt so a one-off path can be used and
+# unioned into the registry.
+#
+# Returns 0 with CHOSEN_WORKDIR set, 10 (ESC → back to session picker),
+# 130 (Ctrl-C).
+pick_workdir() {
+    # Always refresh from disk — register_workdir() may have unioned an
+    # entry between launches; the file is the source of truth.
+    local -a entries=()
+    if [ -r "$WORKDIRS_FILE" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && entries+=("$line")
+        done < "$WORKDIRS_FILE"
+    fi
+    # Sentinel appended at bottom: same convention as ▶ NEW SESSION.
+    local NEW_SENTINEL="▶ enter new path"
+
+    local row rc=0
+    row=$(
+        {
+            printf '%s\n' "${entries[@]}"
+            printf '%s\n' "$NEW_SENTINEL"
+        } | fzf_pick \
+            --prompt='  Workdir  ' \
+            --header=$'claude-sandbox  ·  pick workdir for new session\n↑/↓ navigate  ·  ENTER select  ·  ESC back  ·  CTRL-C quit\nworkdirs.txt is union of env files + every previous launch' \
+            --bind='enter:accept-non-empty' \
+            --preview='echo "Mount this host path at /workspace inside the sandbox container."; echo; echo "Path: {}"; echo; if [ -d "{}" ]; then echo "(exists)"; ls -A "{}" 2>/dev/null | head -20; else echo "(does not exist yet — will be created on launch if writable)"; fi' \
+            --preview-window='right,55%,wrap,border-rounded' \
+            --height=90% \
+            "${FZF_THEME[@]}"
+    ) || rc=$?
+    [ $rc -ne 0 ] && return $rc
+
+    if [ "$row" = "$NEW_SENTINEL" ]; then
+        # Free-text entry. Read from /dev/tty so it works inside the
+        # state-machine subshell context.
+        local path=""
+        printf 'Enter new workdir host path (absolute): ' >&2
+        IFS= read -r path </dev/tty || return 10
+        # Tilde expansion for ergonomics.
+        path=${path/#\~/$HOME}
+        if [ -z "$path" ] || [[ "$path" != /* ]]; then
+            echo "ERROR: must be a non-empty absolute path." >&2
+            return 10
+        fi
+        CHOSEN_WORKDIR=$path
+    else
+        CHOSEN_WORKDIR=$row
+    fi
+    return 0
 }
 
 # --- main state machine ------------------------------------------------------
@@ -683,6 +811,7 @@ cat "$PREVIEW_CACHE_DIR/session.$uuid.txt" 2>/dev/null || printf "(no summary)"'
 
 CHOSEN_AREA=""
 CHOSEN_SESSION=""
+CHOSEN_WORKDIR=""
 ENV_FILE=""
 
 # All menus are populated up-front so forward and ESC-backward navigation
@@ -711,8 +840,26 @@ while true; do
         session)
             pick_session || rc=$?
             case $rc in
-                0)   persist_toggles; break ;;
+                0)
+                    # NEW SESSION or legacy session with no sidecar → ask
+                    # for the workdir. Existing tracked session: workdir
+                    # came from the sidecar already, skip the picker.
+                    if [ -z "$CHOSEN_WORKDIR" ]; then
+                        STAGE=workdir
+                    else
+                        persist_toggles; break
+                    fi
+                    ;;
                 10)  STAGE=area ;;
+                130) echo "Aborted."; exit 130 ;;
+                *)   exit $rc ;;
+            esac
+            ;;
+        workdir)
+            pick_workdir || rc=$?
+            case $rc in
+                0)   persist_toggles; break ;;
+                10)  STAGE=session ;;
                 130) echo "Aborted."; exit 130 ;;
                 *)   exit $rc ;;
             esac
@@ -725,15 +872,73 @@ done
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 
+# Workdir choice from the menu overrides whatever the env file's stacked
+# `export CLAUDE_SANDBOX_PROJECTS_DIR=...` lines settled on. The env file is
+# now purely for flags + base config; the workdir lives in workdirs.txt and
+# per-session sidecars.
+export CLAUDE_SANDBOX_PROJECTS_DIR="$CHOSEN_WORKDIR"
+
+# Make sure the choice ends up in the master registry. Idempotent — if it's
+# already there (came from the picker list), this is a no-op write.
+register_workdir "$CHOSEN_WORKDIR"
+
+STATE_PROJECTS_DIR="$SCRIPT_DIR/claude-sandbox-persistent-state-${CHOSEN_AREA}/.claude/projects"
+
 LAUNCH_ARGS=(--dangerously-skip-permissions)
 if [ "$CHOSEN_SESSION" != "NEW" ]; then
     LAUNCH_ARGS+=(--resume "$CHOSEN_SESSION")
+    # Existing session: sidecar may already exist (no-op) or be missing
+    # (legacy backfill). Either way, stamp it now so the next launcher run
+    # sees the workdir in the session row.
+    if [ -d "$STATE_PROJECTS_DIR" ]; then
+        # Find the jsonl for this UUID across all project subdirs (almost
+        # always just "-workspace", but tolerate other names).
+        found_jsonl=""
+        shopt -s nullglob
+        for cand in "$STATE_PROJECTS_DIR"/*/"$CHOSEN_SESSION".jsonl; do
+            found_jsonl=$cand
+            break
+        done
+        shopt -u nullglob
+        if [ -n "$found_jsonl" ]; then
+            sb_write_session_workdir "$found_jsonl" "$CHOSEN_WORKDIR"
+        fi
+    fi
 fi
+
+# For a NEW SESSION the UUID won't exist until claude writes the jsonl
+# inside the container. Capture a pre-launch timestamp so we can reconcile
+# afterwards: any jsonl created later than this with no sidecar belongs to
+# this launch and gets stamped with CHOSEN_WORKDIR.
+PRE_LAUNCH_TS=$(date +%s)
 
 echo
 echo "Launching sandbox '${CHOSEN_AREA}'..."
-echo "  Workdir: ${CLAUDE_SANDBOX_PROJECTS_DIR:-?}"
+echo "  Workdir: $CLAUDE_SANDBOX_PROJECTS_DIR"
 echo "  Args:    ${LAUNCH_ARGS[*]}"
 echo
 
-exec "$SCRIPT_DIR/run_claude_docker.sh" "${LAUNCH_ARGS[@]}"
+# No `exec` — we need control back after claude exits so we can write the
+# sidecar for the new session. The overhead is one shell frame; the user
+# won't notice.
+"$SCRIPT_DIR/run_claude_docker.sh" "${LAUNCH_ARGS[@]}"
+LAUNCH_RC=$?
+
+# Post-launch reconcile: stamp sidecars for any jsonl created during this
+# run that doesn't have one yet. Bounded to files newer than PRE_LAUNCH_TS
+# so we never overwrite an older session's data.
+if [ -d "$STATE_PROJECTS_DIR" ]; then
+    shopt -s nullglob
+    for jsonl in "$STATE_PROJECTS_DIR"/*/*.jsonl; do
+        sidecar="${jsonl%.jsonl}.workdir"
+        [ -e "$sidecar" ] && continue
+        mt=$(sb_mtime_of "$jsonl")
+        [ -z "$mt" ] && continue
+        if [ "$mt" -ge "$PRE_LAUNCH_TS" ]; then
+            sb_write_session_workdir "$jsonl" "$CHOSEN_WORKDIR"
+        fi
+    done
+    shopt -u nullglob
+fi
+
+exit "$LAUNCH_RC"
