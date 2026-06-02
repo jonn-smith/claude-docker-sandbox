@@ -64,18 +64,20 @@ trap 'rm -rf "$PREVIEW_CACHE_DIR"' EXIT
 # selected row on line 2. Ctrl-C still aborts → exit 130 → distinguishable.
 fzf_pick() {
     local out rc=0 key sel
-    # ESCDELAY=25 cuts the tcell escape-disambiguation wait from its
-    # multi-hundred-ms default down to near-zero, so ESC and Ctrl-C feel
-    # immediate. tcell respects this env var the same way ncurses does.
+    # ESCDELAY=25 is set hopefully — fzf's internal escape-disambiguation
+    # timeout (waiting to see whether ESC is a lone press or the prefix of an
+    # arrow-key CSI sequence) is the dominant remaining delay on older fzf
+    # builds and not fully tunable from outside. Upgrading fzf to a recent
+    # version is the only further fix.
     out=$(ESCDELAY=25 fzf --expect=esc "$@") || rc=$?
     if [ $rc -ne 0 ]; then
         return 130   # ctrl-c or other abort
     fi
-    key=$(printf '%s\n' "$out" | sed -n '1p')
-    sel=$(printf '%s\n' "$out" | sed -n '2p')
-    if [ "$key" = "esc" ]; then
-        return 10
-    fi
+    # Parse "<key>\n<row>" via bash param expansion — avoids two sed forks
+    # per fzf invocation. Shaves a perceptible chunk off back-navigation.
+    key=${out%%$'\n'*}
+    sel=${out#*$'\n'}
+    [ "$key" = "esc" ] && return 10
     printf '%s\n' "$sel"
     return 0
 }
@@ -227,11 +229,11 @@ build_one_area() {
         mt=$(sb_mtime_of "$latest")
         age=$(sb_fmt_age $((now - mt)))
         uuid=$(basename "$latest" .jsonl)
-        IFS=$'\t' read -r sname desc <<<"$(sb_session_meta "$latest")"
-        [ -z "$sname" ] && sname=${desc:-'(unnamed)'}
-        # Second fetch with a high limit so the preview pane can show the
-        # complete summary; fzf --preview-window=wrap handles line breaks.
-        desc_full=$(sb_session_meta "$latest" 4000 | cut -f2)
+        # Single fetch at limit=4000 — preview pane shows the full text,
+        # short table fields are derived from it in bash. Halves python forks
+        # versus calling sb_session_meta once for short + once for long.
+        IFS=$'\t' read -r sname desc_full <<<"$(sb_session_meta "$latest" 4000)"
+        [ -z "$sname" ] && sname=${desc_full:-'(unnamed)'}
     fi
 
     if [[ "$running_set" == *" $area "* ]]; then
@@ -286,15 +288,23 @@ build_session_cache() {
 
     local state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}/.claude/projects"
     if [ -d "$state_dir" ]; then
-        local mt f uuid age name desc
+        local mt f uuid age name desc_full short
         while IFS=$'\t' read -r mt f; do
             uuid=$(basename "$f" .jsonl)
             age=$(sb_fmt_age $((now - mt)))
-            IFS=$'\t' read -r name desc <<<"$(sb_session_meta "$f")"
-            [ -z "$desc" ] && desc='(no summary)'
+            # One python call per session, full text. Short version trimmed
+            # in bash so we don't pay a second fork for the preview pane.
+            IFS=$'\t' read -r name desc_full <<<"$(sb_session_meta "$f" 4000)"
+            [ -z "$desc_full" ] && desc_full='(no summary)'
             [ -z "$name" ] && name='(unnamed)'
-            session_row "$name" "$uuid" "$age" "$desc" >> "$rows_file"
+            short=$desc_full
+            [ ${#short} -gt 80 ] && short="${short:0:79}…"
+            session_row "$name" "$uuid" "$age" "$short" >> "$rows_file"
             printf '%s\n' "$uuid" >> "$uuids_file"
+            {
+                printf 'Last session summary\n\n'
+                printf '%s\n' "$desc_full"
+            } > "$PREVIEW_CACHE_DIR/session.${uuid:0:8}.txt"
         done < <(sb_list_sessions "$state_dir" | sort -rn | head -30)
     fi
     session_row "▶ NEW SESSION" "" "" "Start a fresh conversation" >> "$rows_file"
@@ -356,10 +366,17 @@ AREA_INDEX=()
 build_all_caches() {
     AREA_ROWS=()
     AREA_INDEX=()
-    local now running_set area
+    local now running_set area i n
+    n=${#AREAS[@]}
+    printf 'start_sandbox: indexing %d sandbox(es), this is slow because\n' "$n" >&2
+    printf '  each docker check + per-session JSON parse is a fork...\n' >&2
+    printf '  scanning docker for running containers...\n' >&2
     now=$(date +%s)
     running_set=" $(sb_running_areas | tr '\n' ' ') "
+    i=0
     for area in "${AREAS[@]}"; do
+        i=$((i+1))
+        printf '  [%d/%d] indexing %s sessions...\n' "$i" "$n" "$area" >&2
         AREA_ROWS+=("$(build_one_area "$area" "$running_set" "$now")")
         AREA_INDEX+=("$area")
         build_session_cache "$area" "$now"
@@ -372,6 +389,7 @@ build_all_caches() {
         session_header_sep
     } > "$PREVIEW_CACHE_DIR/sessions.header"
     write_view_helpers
+    printf '  ready.\n' >&2
 }
 
 # --- step 1: area picker -----------------------------------------------------
@@ -527,6 +545,21 @@ pick_session() {
     HR=$INITIAL_HR; VX=$INITIAL_VX; FW=$INITIAL_FW
     printf '%d %d %d\n' "$HR" "$VX" "$FW" > "$toggle_file"
 
+    # Right-pane preview: parse uuid8 from row column 2; cat the matching
+    # per-session summary file. Non-session rows (flag rows / separator) have
+    # no matching file → fallback hint.
+    local preview_cmd
+    preview_cmd='row={};
+case "$row" in
+    *Headroom*|*"Vertex AI"*|*"FISS-MCP writes"*)
+        printf "Flag row — ENTER to toggle"; exit 0 ;;
+    *"── Flags ──"*|"")
+        printf "(separator)"; exit 0 ;;
+esac
+uuid=$(printf "%s" "$row" | sed -E "s/^│ [^│]+ │ +([^ ]+) +│.*/\1/")
+[ -z "$uuid" ] || [ "$uuid" = "$row" ] && { printf "(no summary)"; exit 0; }
+cat "$PREVIEW_CACHE_DIR/session.$uuid.txt" 2>/dev/null || printf "(no summary)"'
+
     # Reopen-on-toggle loop. fzf's `transform` action would do this in-process
     # (no flicker) but it's fzf 0.42+; this loop works on any version. Every
     # ENTER returns control to the shell: flag rows → flip + reloop, session
@@ -541,6 +574,8 @@ pick_session() {
                 --header-lines=3 \
                 --bind="right:pos(-3)" \
                 --bind="left:pos(1)" \
+                --preview="$preview_cmd" \
+                --preview-window='right,55%,wrap,border-rounded' \
                 --height=90% \
                 "${FZF_THEME[@]}"
         ) || rc=$?
