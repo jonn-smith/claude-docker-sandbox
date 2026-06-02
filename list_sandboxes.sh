@@ -16,8 +16,8 @@ shopt -s globstar nullglob
 
 # Shared helpers (sb_fmt_age, sb_session_description, sb_mtime_of, …).
 __LS_SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-# shellcheck source=sandbox_lib.sh
-source "$__LS_SCRIPT_DIR/sandbox_lib.sh"
+# shellcheck source=scripts/sandbox_lib.sh
+source "$__LS_SCRIPT_DIR/scripts/sandbox_lib.sh"
 
 CIDS=()
 while IFS= read -r cid; do

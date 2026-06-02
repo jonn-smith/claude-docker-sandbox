@@ -29,8 +29,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-# shellcheck source=sandbox_lib.sh
-source "$SCRIPT_DIR/sandbox_lib.sh"
+# shellcheck source=scripts/sandbox_lib.sh
+source "$SCRIPT_DIR/scripts/sandbox_lib.sh"
 
 MARK_BEGIN="# vvv start_sandbox managed block — regenerated, do not edit vvv"
 MARK_END="# ^^^ start_sandbox managed block ^^^"
