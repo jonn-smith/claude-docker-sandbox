@@ -84,8 +84,7 @@ fzf_pick() {
 
 # --- styling -----------------------------------------------------------------
 #
-# Dracula-ish purple palette (chosen interactively via palette_preview.sh)
-# with a solid red bar for the current row.
+# Dracula-ish purple palette with a solid red bar for the current row.
 #
 # Palette uses xterm-256 indices, no style modifiers, and one attribute per
 # --color flag. Hex colors (#rrggbb) require fzf 0.32+; `:bold` / `:italic`
