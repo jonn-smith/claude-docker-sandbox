@@ -5,13 +5,18 @@
 #   1. fzf area picker — ASCII-table rows, side preview panel with workdir,
 #      flag state, last session, running status.
 #   2. Refuses if the chosen area is already running.
-#   3. Toggle loop — flip Headroom / Vertex / FISS-writes. Selections persist
-#      back to env.<INSTANCE>.sh inside a managed block (idempotent).
-#   4. fzf session picker — NEW + recent sessions (mtime-sorted). Each row
-#      shows the session's custom title (claude --name), short UUID, age,
-#      and summary.
-#   5. Sources the (possibly patched) env file and execs
+#   3. Combined session+flags picker — recent sessions (mtime-desc) with
+#      "▶ NEW SESSION" at the bottom; Headroom / Vertex / FISS-writes flags
+#      shown in the right preview pane and toggled live via Alt-H / Alt-V /
+#      Alt-F. Flag changes persist back to env.<INSTANCE>.sh inside a managed
+#      block (idempotent) when the user finally launches.
+#   4. Sources the (possibly patched) env file and execs
 #      ./run_claude_docker.sh --dangerously-skip-permissions [--resume <uuid>].
+#
+# Caching: every menu the user can navigate is built ONCE at startup. The area
+# table, per-area preview panels, and per-area session lists are written to a
+# per-process tempdir. ESC-ing backward through the flow re-uses those caches
+# instead of re-forking docker / python, so navigation is instant.
 #
 # Managed block convention: env.<INSTANCE>.sh may contain a block bracketed by
 # the markers below. start_sandbox.sh regenerates that block from current
@@ -194,87 +199,168 @@ area_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─┬─
 area_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $W_AREA)" "$(hrule $W_WORKDIR)" "$(hrule $W_FLAGS)" "$(hrule $W_AGE)" "$(hrule $W_NAME)"; }
 area_header_labels(){ area_row "AREA" "WORKDIR" "FLAGS" "LAST" "SESSION NAME"; }
 
-# Build AREA_ROWS / AREA_INDEX from the on-disk env state, and populate
-# $PREVIEW_CACHE_DIR/<area>.txt so the fzf preview command can just `cat`.
-# Re-runnable so the area picker sees fresh badges + ages every time we go
-# back to it.
+# Build a single area's row + preview cache file. Echoes the row text on
+# stdout so the caller can append it to AREA_ROWS. Side effect: writes
+# "$PREVIEW_CACHE_DIR/<area>.txt".
 #
-# Performance notes (kept rough but the win is real):
-#   - One docker call total via sb_running_areas, not N (was the dominant cost).
-#   - One python3 fork per area via sb_session_meta, not two.
-#   - Preview content is rendered INLINE from the locals we already gathered,
-#     not by re-calling preview_area() which would re-fork docker+python.
+# Split out from the all-areas builder so callers can refresh one area in
+# place if needed (e.g. after persisting a toggle change). $running_set and
+# $now are passed in so the caller batches them and we don't re-fork docker
+# or re-read the clock for every area.
+build_one_area() {
+    local area=$1 running_set=$2 now=$3
+    local envfile state_dir flags projects_dir hr fw vx badge
+    local latest mt age sname desc uuid area_label status
+
+    envfile="$SCRIPT_DIR/env.${area}.sh"
+    state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
+    flags=$(sb_read_env_flags "$envfile")
+    IFS='|' read -r projects_dir hr fw vx <<<"$flags"
+    badge=$(flag_badge "$hr" "$vx" "$fw")
+
+    latest=$(sb_latest_session_file "$state_dir/.claude/projects")
+    sname=""; desc=""; uuid=""; age='(none)'
+    if [ -n "$latest" ]; then
+        mt=$(sb_mtime_of "$latest")
+        age=$(sb_fmt_age $((now - mt)))
+        uuid=$(basename "$latest" .jsonl)
+        IFS=$'\t' read -r sname desc <<<"$(sb_session_meta "$latest")"
+        [ -z "$sname" ] && sname=${desc:-'(unnamed)'}
+    fi
+
+    if [[ "$running_set" == *" $area "* ]]; then
+        area_label="${area} *"; status="RUNNING"
+    else
+        area_label="$area"; status="not running"
+    fi
+
+    {
+        printf '╭─ Sandbox %s\n' "$area"
+        printf '│  Env file   env.%s.sh\n' "$area"
+        printf '│  Workdir    %s\n' "${projects_dir:-?}"
+        printf '│  State dir  %s\n' "$state_dir"
+        printf '│  Status     %s\n' "$status"
+        printf '╰─\n\n'
+        printf '╭─ Flags (from env file)\n'
+        printf '│  [%s] Headroom         token compression\n' \
+            "$([ "$hr" = 1 ] && echo '✓' || echo ' ')"
+        printf '│  [%s] Vertex AI        paid GCP project\n' \
+            "$([ "$vx" = 1 ] && echo '✓' || echo ' ')"
+        printf '│  [%s] FISS-MCP writes  agent can mutate Terra state\n' \
+            "$([ "$fw" = 1 ] && echo '✓' || echo ' ')"
+        printf '╰─\n\n'
+        printf '╭─ Last session\n'
+        if [ -n "$latest" ]; then
+            printf '│  Name     %s\n' "${sname:-(unnamed)}"
+            printf '│  UUID     %s\n' "${uuid:0:8}"
+            printf '│  Updated  %s\n' "$age"
+            [ -n "$desc" ] && printf '│  Summary  %s\n' "$desc"
+        else
+            printf '│  (no sessions yet)\n'
+        fi
+        printf '╰─\n'
+    } > "$PREVIEW_CACHE_DIR/$area.txt"
+
+    area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "${sname:-—}"
+}
+
+# Write the per-area session-list cache. Produces two parallel files:
+#   $PREVIEW_CACHE_DIR/sessions.<area>.rows   - aligned table rows
+#   $PREVIEW_CACHE_DIR/sessions.<area>.uuids  - matching UUIDs (or "NEW")
+# Sessions are sorted newest-first; the "▶ NEW SESSION" sentinel is appended
+# at the BOTTOM so the most recent history is what the user sees right after
+# the table headers (matches how they'd typically scan: top = most recent).
+build_session_cache() {
+    local area=$1 now=$2
+    local rows_file="$PREVIEW_CACHE_DIR/sessions.${area}.rows"
+    local uuids_file="$PREVIEW_CACHE_DIR/sessions.${area}.uuids"
+    : > "$rows_file"
+    : > "$uuids_file"
+
+    local state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}/.claude/projects"
+    if [ -d "$state_dir" ]; then
+        local mt f uuid age name desc
+        while IFS=$'\t' read -r mt f; do
+            uuid=$(basename "$f" .jsonl)
+            age=$(sb_fmt_age $((now - mt)))
+            IFS=$'\t' read -r name desc <<<"$(sb_session_meta "$f")"
+            [ -z "$desc" ] && desc='(no summary)'
+            [ -z "$name" ] && name='(unnamed)'
+            session_row "$name" "$uuid" "$age" "$desc" >> "$rows_file"
+            printf '%s\n' "$uuid" >> "$uuids_file"
+        done < <(sb_list_sessions "$state_dir" | sort -rn | head -30)
+    fi
+    session_row "▶ NEW SESSION" "" "" "Start a fresh conversation" >> "$rows_file"
+    printf 'NEW\n' >> "$uuids_file"
+}
+
+# Write the two toggle helper scripts once at startup. fzf preview/bind
+# commands can only call shell strings, not bash functions, so we keep these
+# on disk. Both read/write a tiny "h v f" state file that the launcher reads
+# back after fzf exits.
+write_toggle_helpers() {
+    cat > "$PREVIEW_CACHE_DIR/flip.sh" <<'SH'
+#!/usr/bin/env bash
+# Flip one flag in the live state file. Args: <h|v|f> <state_file>
+set -u
+which=$1; sf=$2
+read -r h v f < "$sf"
+case "$which" in
+    h) h=$((1-h)) ;;
+    v) v=$((1-v)) ;;
+    f) f=$((1-f)) ;;
+esac
+printf '%d %d %d\n' "$h" "$v" "$f" > "$sf"
+SH
+    chmod +x "$PREVIEW_CACHE_DIR/flip.sh"
+
+    cat > "$PREVIEW_CACHE_DIR/render_toggles.sh" <<'SH'
+#!/usr/bin/env bash
+# Render the right-pane toggle UI. Args: <state_file>
+set -u
+read -r h v f < "$1"
+ch() { [ "$1" = 1 ] && printf '✓' || printf ' '; }
+H=$(ch "$h"); V=$(ch "$v"); F=$(ch "$f")
+cat <<MENU
+
+  Flags
+
+    [$H] Headroom         token compression
+    [$V] Vertex AI        paid GCP project
+    [$F] FISS-MCP writes  agent can mutate Terra
+
+  Toggle keys
+    Alt-H   Headroom
+    Alt-V   Vertex AI
+    Alt-F   FISS writes
+
+  Navigation
+    ENTER   launch selected
+    ESC     back to areas
+    CTRL-C  quit
+MENU
+SH
+    chmod +x "$PREVIEW_CACHE_DIR/render_toggles.sh"
+}
+
+# Build every menu cache the launcher will navigate. Called once before the
+# state-machine loop starts; nothing in the loop refreshes these because
+# (a) the user can't go back beyond `area` (top-level ESC = quit) and (b)
+# sessions don't appear mid-script (claude only writes them after exec).
 AREA_ROWS=()
 AREA_INDEX=()
-build_area_rows() {
+build_all_caches() {
     AREA_ROWS=()
     AREA_INDEX=()
-
-    # Batched running-area lookup. Format as a space-padded string so the
-    # membership test below is a single substring match, no inner loop.
-    local running_set
-    running_set=" $(sb_running_areas | tr '\n' ' ') "
-
-    local area envfile state_dir flags projects_dir hr fw vx badge
-    local latest mt age sname desc uuid area_label status now
+    local now running_set area
     now=$(date +%s)
+    running_set=" $(sb_running_areas | tr '\n' ' ') "
     for area in "${AREAS[@]}"; do
-        envfile="$SCRIPT_DIR/env.${area}.sh"
-        state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
-        flags=$(sb_read_env_flags "$envfile")
-        IFS='|' read -r projects_dir hr fw vx <<<"$flags"
-
-        badge=$(flag_badge "$hr" "$vx" "$fw")
-
-        latest=$(sb_latest_session_file "$state_dir/.claude/projects")
-        sname=""; desc=""; uuid=""; age='(none)'
-        if [ -n "$latest" ]; then
-            mt=$(sb_mtime_of "$latest")
-            age=$(sb_fmt_age $((now - mt)))
-            uuid=$(basename "$latest" .jsonl)
-            IFS=$'\t' read -r sname desc <<<"$(sb_session_meta "$latest")"
-            [ -z "$sname" ] && sname=${desc:-'(unnamed)'}
-        fi
-
-        if [[ "$running_set" == *" $area "* ]]; then
-            area_label="${area} *"
-            status="RUNNING"
-        else
-            area_label="$area"
-            status="not running"
-        fi
-
-        AREA_ROWS+=("$(area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "${sname:-—}")")
+        AREA_ROWS+=("$(build_one_area "$area" "$running_set" "$now")")
         AREA_INDEX+=("$area")
-
-        # Inline preview render. All data already in locals — zero extra forks.
-        {
-            printf '╭─ Sandbox %s\n' "$area"
-            printf '│  Env file   env.%s.sh\n' "$area"
-            printf '│  Workdir    %s\n' "${projects_dir:-?}"
-            printf '│  State dir  %s\n' "$state_dir"
-            printf '│  Status     %s\n' "$status"
-            printf '╰─\n\n'
-            printf '╭─ Flags (from env file)\n'
-            printf '│  [%s] Headroom         token compression\n' \
-                "$([ "$hr" = 1 ] && echo '✓' || echo ' ')"
-            printf '│  [%s] Vertex AI        paid GCP project\n' \
-                "$([ "$vx" = 1 ] && echo '✓' || echo ' ')"
-            printf '│  [%s] FISS-MCP writes  agent can mutate Terra state\n' \
-                "$([ "$fw" = 1 ] && echo '✓' || echo ' ')"
-            printf '╰─\n\n'
-            printf '╭─ Last session\n'
-            if [ -n "$latest" ]; then
-                printf '│  Name     %s\n' "${sname:-(unnamed)}"
-                printf '│  UUID     %s\n' "${uuid:0:8}"
-                printf '│  Updated  %s\n' "$age"
-                [ -n "$desc" ] && printf '│  Summary  %s\n' "$desc"
-            else
-                printf '│  (no sessions yet)\n'
-            fi
-            printf '╰─\n'
-        } > "$PREVIEW_CACHE_DIR/$area.txt"
+        build_session_cache "$area" "$now"
     done
+    write_toggle_helpers
 }
 
 # --- step 1: area picker -----------------------------------------------------
@@ -283,11 +369,9 @@ build_area_rows() {
 # them pinned and skips them during navigation.
 #
 # Returns 0 (sets CHOSEN_AREA), 10 (ESC, top-level so caller quits), or 130
-# (Ctrl-C). build_area_rows is re-run on each call so flag badges and ages
-# reflect any in-session env edits.
+# (Ctrl-C). Reads from caches populated by build_all_caches — re-entering
+# pick_area via ESC from the session screen is therefore zero-cost.
 pick_area() {
-    build_area_rows
-
     # fzf preview command needs the area NAME, not the whole table row.
     # Extract the second column (after "│ ") — strip surrounding whitespace
     # and the optional " *" running marker. Content is already on disk;
@@ -334,67 +418,6 @@ check_not_running() {
     echo "  Or stop:      docker stop claude-sandbox-${CHOSEN_AREA}" >&2
     echo "Returning to area picker." >&2
     return 10
-}
-
-# --- step 2: toggle loop -----------------------------------------------------
-
-load_toggle_state() {
-    ENV_FILE="$SCRIPT_DIR/env.${CHOSEN_AREA}.sh"
-    local flags_line
-    flags_line=$(sb_read_env_flags "$ENV_FILE")
-    IFS='|' read -r INITIAL_PROJECTS_DIR INITIAL_HR INITIAL_FW INITIAL_VX <<<"$flags_line"
-    HR=$INITIAL_HR; VX=$INITIAL_VX; FW=$INITIAL_FW
-}
-
-TW=58   # toggle table width
-toggle_top()  { printf '╭─%s─╮\n' "$(hrule $TW)"; }
-toggle_sep()  { printf '├─%s─┤\n' "$(hrule $TW)"; }
-toggle_bot()  { printf '╰─%s─╯\n' "$(hrule $TW)"; }
-toggle_row()  {
-    local on=$1 short=$2 label=$3 hint=$4
-    local box
-    [ "$on" = 1 ] && box='[✓]' || box='[ ]'
-    printf '│ %s %-1s %-16s %-*s │\n' "$box" "$short" "$label" $((TW - 26)) "$hint"
-}
-
-# Returns 0 = Launch chosen, 10 = ESC (back to area), 130 = Ctrl-C.
-pick_toggles() {
-    local pick rc
-    while true; do
-        rc=0
-        pick=$(
-            {
-                toggle_top
-                printf '│ %-*s │\n' "$TW" "Flags for sandbox '${CHOSEN_AREA}'"
-                toggle_sep
-                toggle_row "$HR" "H" "Headroom"        "token compression proxy"
-                toggle_row "$VX" "V" "Vertex AI"       "route via host GCP project (paid)"
-                toggle_row "$FW" "F" "FISS-MCP writes" "agent can mutate Terra state"
-                toggle_sep
-                printf '│ %-*s │\n' "$TW" "▶  Launch sandbox"
-                toggle_bot
-            } | fzf_pick \
-                --prompt='  Toggle  ' \
-                --header="$(printf 'claude-sandbox  ·  %s  ·  flags\nENTER flip toggle / launch  ·  ESC back to areas  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
-                --header-lines=3 \
-                --no-multi \
-                --height=50% \
-                "${FZF_THEME[@]}"
-        ) || rc=$?
-
-        case $rc in
-            10|130) return $rc ;;
-            0)
-                case "$pick" in
-                    *Headroom*)          HR=$((1 - HR)) ;;
-                    *'Vertex AI'*)       VX=$((1 - VX)) ;;
-                    *'FISS-MCP writes'*) FW=$((1 - FW)) ;;
-                    *'Launch sandbox'*)  return 0 ;;
-                    *) : ;;
-                esac
-                ;;
-        esac
-    done
 }
 
 # --- persist toggles via managed block (only if changed) ---------------------
@@ -458,28 +481,30 @@ session_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─╮
 session_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $SW_NAME)" "$(hrule $SW_UUID)" "$(hrule $SW_AGE)" "$(hrule $SW_SUMMARY)"; }
 session_header_labels(){ session_row "NAME" "UUID" "LAST" "SUMMARY"; }
 
-# Returns 0 (sets CHOSEN_SESSION), 10 (ESC back to toggle), 130 (Ctrl-C).
+# Combined session + flags picker. Session list comes from the per-area
+# cache file written by build_session_cache (newest first, "▶ NEW SESSION"
+# at the bottom). Toggle state lives in $PREVIEW_CACHE_DIR/toggles.<area>
+# — a three-int file mutated in place by flip.sh and rendered in fzf's
+# right preview pane by render_toggles.sh.
+#
+# Returns 0 (sets CHOSEN_SESSION + HR/VX/FW + ENV_FILE + INITIAL_*),
+# 10 (ESC → back to area picker), 130 (Ctrl-C).
 pick_session() {
-    local state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${CHOSEN_AREA}/.claude/projects"
+    ENV_FILE="$SCRIPT_DIR/env.${CHOSEN_AREA}.sh"
+    local toggle_file="$PREVIEW_CACHE_DIR/toggles.${CHOSEN_AREA}"
+    local sess_rows="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.rows"
+    local sess_uuids="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.uuids"
+    local flip_sh="$PREVIEW_CACHE_DIR/flip.sh"
+    local render_sh="$PREVIEW_CACHE_DIR/render_toggles.sh"
 
-    SESSION_ROWS=()
-    SESSION_UUIDS=()
-    SESSION_ROWS+=("$(session_row "▶ NEW SESSION" "" "" "Start a fresh conversation")")
-    SESSION_UUIDS+=("NEW")
-
-    if [ -d "$state_dir" ]; then
-        local now mt f uuid age name desc
-        now=$(date +%s)
-        while IFS=$'\t' read -r mt f; do
-            uuid=$(basename "$f" .jsonl)
-            age=$(sb_fmt_age $((now - mt)))
-            IFS=$'\t' read -r name desc <<<"$(sb_session_meta "$f")"
-            [ -z "$desc" ] && desc='(no summary)'
-            [ -z "$name" ] && name='(unnamed)'
-            SESSION_ROWS+=("$(session_row "$name" "$uuid" "$age" "$desc")")
-            SESSION_UUIDS+=("$uuid")
-        done < <(sb_list_sessions "$state_dir" | sort -rn | head -30)
-    fi
+    # Reset toggle state from the env file on every entry into this screen.
+    # In-session flips that didn't end in a launch (the user ESC-ed out)
+    # therefore evaporate, matching the "haven't committed yet" intuition.
+    local flags _pd
+    flags=$(sb_read_env_flags "$ENV_FILE")
+    IFS='|' read -r _pd INITIAL_HR INITIAL_FW INITIAL_VX <<<"$flags"
+    HR=$INITIAL_HR; VX=$INITIAL_VX; FW=$INITIAL_FW
+    printf '%d %d %d\n' "$HR" "$VX" "$FW" > "$toggle_file"
 
     local row rc=0
     row=$(
@@ -487,37 +512,60 @@ pick_session() {
             session_header_top
             session_header_labels
             session_header_sep
-            printf '%s\n' "${SESSION_ROWS[@]}"
+            cat "$sess_rows"
         } | fzf_pick \
             --prompt='  Session  ' \
-            --header="$(printf 'claude-sandbox  ·  %s  ·  pick session\nENTER select  ·  ESC back to flags  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
+            --header="$(printf 'claude-sandbox  ·  %s  ·  pick session + flags\nENTER launch  ·  Alt-H/V/F flip flag  ·  ESC back  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
             --header-lines=3 \
-            --height=80% \
+            --preview="$render_sh $toggle_file" \
+            --preview-window='right,42%,wrap,border-rounded' \
+            --bind="alt-h:execute-silent($flip_sh h $toggle_file)+refresh-preview" \
+            --bind="alt-v:execute-silent($flip_sh v $toggle_file)+refresh-preview" \
+            --bind="alt-f:execute-silent($flip_sh f $toggle_file)+refresh-preview" \
+            --height=85% \
             "${FZF_THEME[@]}"
     ) || rc=$?
+
+    # Slurp the (possibly flipped) toggle state regardless of rc — harmless
+    # if the user ESC'd, and required if they pressed Enter.
+    read -r HR VX FW < "$toggle_file"
+
     [ $rc -ne 0 ] && return $rc
 
-    CHOSEN_SESSION=""
-    local i
-    for i in "${!SESSION_ROWS[@]}"; do
-        if [ "${SESSION_ROWS[$i]}" = "$row" ]; then
-            CHOSEN_SESSION="${SESSION_UUIDS[$i]}"
+    # Resolve the chosen row → UUID by walking the rows + uuids files in
+    # parallel. fd 3 reads uuids while the main loop reads rows.
+    local line uuid="" found=""
+    while IFS= read -r line; do
+        IFS= read -r uuid <&3 || true
+        if [ "$line" = "$row" ]; then
+            found=$uuid
             break
         fi
-    done
-    [ -n "$CHOSEN_SESSION" ] || { echo "ERROR: could not resolve session UUID." >&2; return 130; }
+    done < "$sess_rows" 3< "$sess_uuids"
+
+    if [ -z "$found" ]; then
+        echo "ERROR: could not resolve session UUID." >&2
+        return 130
+    fi
+    CHOSEN_SESSION=$found
     return 0
 }
 
 # --- main state machine ------------------------------------------------------
 #
-# Transitions: area → running_check → toggle → session → launch.
-# ESC at any step: back one step (except area, which is top-level → quit).
+# Transitions: area → running_check → session → launch.
+# Flags are now part of the session screen, so there's no separate toggle
+# stage. ESC at any step goes back one step (area is top-level → quit).
 # Ctrl-C anywhere: quit.
 
 CHOSEN_AREA=""
 CHOSEN_SESSION=""
 ENV_FILE=""
+
+# All menus are populated up-front so forward and ESC-backward navigation
+# don't pay any docker / python costs.
+build_all_caches
+
 STAGE=area
 while true; do
     rc=0
@@ -532,25 +580,16 @@ while true; do
         running_check)
             check_not_running || rc=$?
             case $rc in
-                0)  load_toggle_state; STAGE=toggle ;;
+                0)  STAGE=session ;;
                 10) STAGE=area ;;
                 *)  exit $rc ;;
-            esac
-            ;;
-        toggle)
-            pick_toggles || rc=$?
-            case $rc in
-                0)   persist_toggles; STAGE=session ;;
-                10)  STAGE=area ;;
-                130) echo "Aborted."; exit 130 ;;
-                *)   exit $rc ;;
             esac
             ;;
         session)
             pick_session || rc=$?
             case $rc in
-                0)   break ;;
-                10)  STAGE=toggle ;;
+                0)   persist_toggles; break ;;
+                10)  STAGE=area ;;
                 130) echo "Aborted."; exit 130 ;;
                 *)   exit $rc ;;
             esac
