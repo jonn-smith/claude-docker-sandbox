@@ -20,6 +20,37 @@ sb_fmt_age() {
     fi
 }
 
+# Pull the session's custom title (set via `claude --name`). Empty string if
+# the session was never named. Silent no-op if python3 missing.
+#
+# Format: session jsonl files contain rows like:
+#   {"type":"custom-title","customTitle":"my-name","sessionId":"<uuid>"}
+# The first such row wins (later rows are renames; we take the original).
+sb_session_name() {
+    local jsonl=$1
+    command -v python3 >/dev/null 2>&1 || return 0
+    python3 - "$jsonl" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(o, dict) and o.get('type') == 'custom-title':
+                t = o.get('customTitle')
+                if isinstance(t, str) and t.strip():
+                    print(t.strip())
+                    break
+except FileNotFoundError:
+    pass
+PY
+}
+
 # Pull a description for a session jsonl: prefer Claude-generated `summary`
 # line; fall back to first user-prompt text. Truncated to 80 chars.
 # Silent no-op if python3 missing.
