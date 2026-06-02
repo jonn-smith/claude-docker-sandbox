@@ -222,13 +222,16 @@ build_one_area() {
     badge=$(flag_badge "$hr" "$vx" "$fw")
 
     latest=$(sb_latest_session_file "$state_dir/.claude/projects")
-    sname=""; desc=""; uuid=""; age='(none)'
+    sname=""; desc=""; uuid=""; age='(none)'; desc_full=""
     if [ -n "$latest" ]; then
         mt=$(sb_mtime_of "$latest")
         age=$(sb_fmt_age $((now - mt)))
         uuid=$(basename "$latest" .jsonl)
         IFS=$'\t' read -r sname desc <<<"$(sb_session_meta "$latest")"
         [ -z "$sname" ] && sname=${desc:-'(unnamed)'}
+        # Second fetch with a high limit so the preview pane can show the
+        # complete summary; fzf --preview-window=wrap handles line breaks.
+        desc_full=$(sb_session_meta "$latest" 4000 | cut -f2)
     fi
 
     if [[ "$running_set" == *" $area "* ]]; then
@@ -252,19 +255,16 @@ build_one_area() {
         printf '│  [%s] FISS-MCP writes  agent can mutate Terra state\n' \
             "$([ "$fw" = 1 ] && echo '✓' || echo ' ')"
         printf '╰─\n\n'
-        # "Last session" section is intentionally box-less so long summaries
-        # wrap cleanly under --preview-window=wrap (box-prefixed lines look
-        # broken when fzf wraps the value half-way through).
-        printf 'Last session\n\n'
+        # Box-less so fzf --preview-window=wrap wraps long lines cleanly.
+        printf 'Last session summary\n\n'
         if [ -n "$latest" ]; then
-            printf '  Name\n    %s\n\n' "${sname:-(unnamed)}"
-            printf '  UUID\n    %s\n\n' "${uuid:0:8}"
-            printf '  Updated\n    %s\n' "$age"
-            if [ -n "$desc" ]; then
-                printf '\n  Summary\n    %s\n' "$desc"
+            if [ -n "$desc_full" ]; then
+                printf '%s\n' "$desc_full"
+            else
+                printf '(no summary)\n'
             fi
         else
-            printf '  (no sessions yet)\n'
+            printf '(no sessions yet)\n'
         fi
     } > "$PREVIEW_CACHE_DIR/$area.txt"
 
@@ -301,22 +301,14 @@ build_session_cache() {
     printf 'NEW\n' >> "$uuids_file"
 }
 
-# Three helper scripts that back the menu-2 list. fzf bind/reload/transform
-# expressions can only invoke shell strings, so the logic lives on disk and
-# is shared across re-runs of fzf within the same script invocation.
+# Two helper scripts that back the menu-2 list. They live on disk so the
+# pick_session loop can re-exec view.sh on every reopen without re-quoting
+# heredocs.
 #
-#   view.sh         emits the full menu-2 row list to stdout, including a
-#                   visual separator and three flag rows with current state.
-#                   Used both for initial display and by every reload action.
-#
-#   flip.sh         given a row text and the toggle state file, identifies
-#                   which flag the row corresponds to and flips it in place.
-#
-#   enter_handler.sh  given a row text and the per-area paths, prints the
-#                     fzf action string that ENTER should execute for that
-#                     row — either flip+reload (flag row), ignore (separator),
-#                     or accept (session row). Run via fzf's transform()
-#                     action so the decision happens at fzf's exec time.
+#   view.sh   emits the full menu-2 row list to stdout: pinned header lines,
+#             session rows, separator, three flag rows with current state.
+#   flip.sh   given a row text and the toggle state file, identifies which
+#             flag the row corresponds to and flips it in place.
 write_view_helpers() {
     cat > "$PREVIEW_CACHE_DIR/view.sh" <<'SH'
 #!/usr/bin/env bash
@@ -352,34 +344,6 @@ printf '%d %d %d\n' "$h" "$v" "$f" > "$sf"
 SH
     chmod +x "$PREVIEW_CACHE_DIR/flip.sh"
 
-    cat > "$PREVIEW_CACHE_DIR/enter_handler.sh" <<'SH'
-#!/usr/bin/env bash
-# Args: <toggle_state_file> <header_file> <session_rows_file> <row_text>
-# Prints an fzf action expression. Designed to be invoked from
-# `--bind 'enter:transform(./enter_handler.sh ...)'`.
-#
-# Quoting note: fzf's transform output is parsed as the action grammar, so
-# parens / `+` / `,` in the embedded row text would break it. We pass the
-# row to the inner scripts via fzf's own {} template (re-expanded by fzf at
-# execute-time), not by interpolating $row into the output. The shell-side
-# `row` arg here is used ONLY to decide which action to emit.
-set -u
-toggle=$1; header=$2; sess=$3; shift 3; row=$*
-dir=$(dirname "$toggle")
-case "$row" in
-    *Headroom*|*'Vertex AI'*|*'FISS-MCP writes'*)
-        printf 'execute-silent(%s/flip.sh {} %s)+reload(%s/view.sh %s %s %s)' \
-            "$dir" "$toggle" "$dir" "$header" "$sess" "$toggle"
-        ;;
-    *'── Flags ──'*|'')
-        printf 'ignore'
-        ;;
-    *)
-        printf 'accept'
-        ;;
-esac
-SH
-    chmod +x "$PREVIEW_CACHE_DIR/enter_handler.sh"
 }
 
 # Build every menu cache the launcher will navigate. Called once before the
@@ -528,20 +492,20 @@ session_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┤
 session_header_labels(){ session_row "NAME" "UUID" "LAST" "SUMMARY"; }
 
 # Combined session + flags picker. The fzf list is a single column
-# produced by view.sh: the per-area session rows on top, a visual separator,
+# produced by view.sh: per-area session rows on top, a visual separator,
 # then three flag rows reflecting the current toggle state. Navigation:
 #
 #   ↑/↓      step through the list
 #   RIGHT    jump cursor to the first flag row     (pos -3)
 #   LEFT     jump cursor to the first session row  (pos 1)
-#   ENTER    transform() decides per-row:
-#              - flag row      → flip + reload (cursor stays, state updates)
-#              - separator     → ignore
-#              - session/NEW   → accept (launcher resolves to UUID and execs)
+#   ENTER    flag row → flip state, reopen fzf (cursor jumps back to top)
+#            separator → reopen (no-op)
+#            session/NEW → accept, resolve UUID, return
 #   ESC      back to area picker
 #   CTRL-C   quit
 #
-# The transform action is fzf 0.42+.
+# fzf reopen loop (not in-process transform) to stay compatible with older
+# fzf versions that lack the transform action (added in 0.42).
 #
 # Returns 0 (sets CHOSEN_SESSION + HR/VX/FW + ENV_FILE + INITIAL_*),
 # 10 (ESC → back to area picker), 130 (Ctrl-C).
@@ -552,55 +516,64 @@ pick_session() {
     local sess_uuids="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.uuids"
     local hdr_file="$PREVIEW_CACHE_DIR/sessions.header"
     local view_sh="$PREVIEW_CACHE_DIR/view.sh"
-    local enter_sh="$PREVIEW_CACHE_DIR/enter_handler.sh"
+    local flip_sh="$PREVIEW_CACHE_DIR/flip.sh"
 
-    # Reset toggle state from the env file on every entry into this screen.
-    # In-session flips that didn't end in a launch (the user ESC-ed out)
-    # therefore evaporate, matching the "haven't committed yet" intuition.
+    # Reset toggle state from the env file on entry. In-session flips that
+    # don't end in a launch (user ESC-ed out) therefore evaporate.
     local flags _pd
     flags=$(sb_read_env_flags "$ENV_FILE")
     IFS='|' read -r _pd INITIAL_HR INITIAL_FW INITIAL_VX <<<"$flags"
     HR=$INITIAL_HR; VX=$INITIAL_VX; FW=$INITIAL_FW
     printf '%d %d %d\n' "$HR" "$VX" "$FW" > "$toggle_file"
 
-    local row rc=0
-    row=$(
-        "$view_sh" "$hdr_file" "$sess_rows" "$toggle_file" | fzf_pick \
-            --prompt='  Session  ' \
-            --header="$(printf 'claude-sandbox  ·  %s  ·  pick session + flags\n↑/↓ navigate  ·  RIGHT to flags  ·  LEFT to sessions  ·  ENTER act  ·  ESC back  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
-            --header-lines=3 \
-            --bind="right:pos(-3)" \
-            --bind="left:pos(1)" \
-            --bind="enter:transform($enter_sh $toggle_file $hdr_file $sess_rows {})" \
-            --height=90% \
-            "${FZF_THEME[@]}"
-    ) || rc=$?
+    # Reopen-on-toggle loop. fzf's `transform` action would do this in-process
+    # (no flicker) but it's fzf 0.42+; this loop works on any version. Every
+    # ENTER returns control to the shell: flag rows → flip + reloop, session
+    # rows → resolve UUID + return, separator → reloop.
+    local row rc
+    while :; do
+        rc=0
+        row=$(
+            "$view_sh" "$hdr_file" "$sess_rows" "$toggle_file" | fzf_pick \
+                --prompt='  Session  ' \
+                --header="$(printf 'claude-sandbox  ·  %s  ·  pick session + flags\n↑/↓ navigate  ·  RIGHT to flags  ·  LEFT to sessions  ·  ENTER act  ·  ESC back  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
+                --header-lines=3 \
+                --bind="right:pos(-3)" \
+                --bind="left:pos(1)" \
+                --height=90% \
+                "${FZF_THEME[@]}"
+        ) || rc=$?
 
-    # Slurp the (possibly flipped) toggle state regardless of rc — harmless
-    # if the user ESC'd, and required if they pressed Enter on a session.
-    read -r HR VX FW < "$toggle_file"
+        read -r HR VX FW < "$toggle_file"
+        [ $rc -ne 0 ] && return $rc
 
-    [ $rc -ne 0 ] && return $rc
+        case "$row" in
+            *Headroom*|*'Vertex AI'*|*'FISS-MCP writes'*)
+                "$flip_sh" "$row" "$toggle_file"
+                continue
+                ;;
+            *'── Flags ──'*|'')
+                continue
+                ;;
+        esac
 
-    # Resolve the chosen row → UUID by walking the rows + uuids files in
-    # parallel. fd 3 reads uuids while the main loop reads rows. The
-    # transform() bind guarantees the accepted row is a session row (or
-    # NEW SESSION), so a missing match here is a real bug.
-    local line uuid="" found=""
-    while IFS= read -r line; do
-        IFS= read -r uuid <&3 || true
-        if [ "$line" = "$row" ]; then
-            found=$uuid
-            break
+        # Session row — resolve to UUID via parallel walk of rows/uuids files.
+        local line uuid="" found=""
+        while IFS= read -r line; do
+            IFS= read -r uuid <&3 || true
+            if [ "$line" = "$row" ]; then
+                found=$uuid
+                break
+            fi
+        done < "$sess_rows" 3< "$sess_uuids"
+
+        if [ -z "$found" ]; then
+            echo "ERROR: could not resolve session UUID from row '$row'." >&2
+            return 130
         fi
-    done < "$sess_rows" 3< "$sess_uuids"
-
-    if [ -z "$found" ]; then
-        echo "ERROR: could not resolve session UUID from row '$row'." >&2
-        return 130
-    fi
-    CHOSEN_SESSION=$found
-    return 0
+        CHOSEN_SESSION=$found
+        return 0
+    done
 }
 
 # --- main state machine ------------------------------------------------------

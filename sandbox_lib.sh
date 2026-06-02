@@ -58,10 +58,11 @@ PY
 # Either field may be empty.
 sb_session_meta() {
     local jsonl=$1
+    local limit=${2:-80}
     command -v python3 >/dev/null 2>&1 || { printf '\t\n'; return 0; }
-    python3 - "$jsonl" <<'PY'
+    python3 - "$jsonl" "$limit" <<'PY'
 import json, sys
-LIMIT = 80
+LIMIT = int(sys.argv[2])
 def trim(s):
     s = ' '.join(s.split())
     return s if len(s) <= LIMIT else s[:LIMIT-1] + '…'
