@@ -64,7 +64,10 @@ trap 'rm -rf "$PREVIEW_CACHE_DIR"' EXIT
 # selected row on line 2. Ctrl-C still aborts → exit 130 → distinguishable.
 fzf_pick() {
     local out rc=0 key sel
-    out=$(fzf --expect=esc "$@") || rc=$?
+    # ESCDELAY=25 cuts the tcell escape-disambiguation wait from its
+    # multi-hundred-ms default down to near-zero, so ESC and Ctrl-C feel
+    # immediate. tcell respects this env var the same way ncurses does.
+    out=$(ESCDELAY=25 fzf --expect=esc "$@") || rc=$?
     if [ $rc -ne 0 ]; then
         return 130   # ctrl-c or other abort
     fi
@@ -118,11 +121,12 @@ FZF_THEME=(
 )
 
 # Column widths (so the area-picker rows align as a real ASCII table).
+# Session name lives in the right preview pane only — the table now stops
+# at LAST so workdir + flags + last-touch can breathe.
 W_AREA=10
-W_WORKDIR=32
+W_WORKDIR=42
 W_FLAGS=7
 W_AGE=10
-W_NAME=24
 
 # Truncate a string with a leading ellipsis if it overflows the target width.
 # Right-aligned tail makes the suffix (the meaningful basename of a workdir)
@@ -186,18 +190,17 @@ done
 # user only navigates data rows.
 
 area_row() {
-    local area=$1 workdir=$2 flags=$3 age=$4 name=$5
-    printf '│ %-*s │ %-*s │ %-*s │ %-*s │ %-*s │\n' \
+    local area=$1 workdir=$2 flags=$3 age=$4
+    printf '│ %-*s │ %-*s │ %-*s │ %-*s │\n' \
         "$W_AREA"    "$(trim_right "$area"    "$W_AREA")" \
         "$W_WORKDIR" "$(trim_left  "$workdir" "$W_WORKDIR")" \
         "$W_FLAGS"   "$flags" \
-        "$W_AGE"     "$age" \
-        "$W_NAME"    "$(trim_right "$name" "$W_NAME")"
+        "$W_AGE"     "$age"
 }
 
-area_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─┬─%s─╮\n' "$(hrule $W_AREA)" "$(hrule $W_WORKDIR)" "$(hrule $W_FLAGS)" "$(hrule $W_AGE)" "$(hrule $W_NAME)"; }
-area_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $W_AREA)" "$(hrule $W_WORKDIR)" "$(hrule $W_FLAGS)" "$(hrule $W_AGE)" "$(hrule $W_NAME)"; }
-area_header_labels(){ area_row "AREA" "WORKDIR" "FLAGS" "LAST" "SESSION NAME"; }
+area_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─╮\n' "$(hrule $W_AREA)" "$(hrule $W_WORKDIR)" "$(hrule $W_FLAGS)" "$(hrule $W_AGE)"; }
+area_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $W_AREA)" "$(hrule $W_WORKDIR)" "$(hrule $W_FLAGS)" "$(hrule $W_AGE)"; }
+area_header_labels(){ area_row "AREA" "WORKDIR" "FLAGS" "LAST"; }
 
 # Build a single area's row + preview cache file. Echoes the row text on
 # stdout so the caller can append it to AREA_ROWS. Side effect: writes
@@ -249,19 +252,23 @@ build_one_area() {
         printf '│  [%s] FISS-MCP writes  agent can mutate Terra state\n' \
             "$([ "$fw" = 1 ] && echo '✓' || echo ' ')"
         printf '╰─\n\n'
-        printf '╭─ Last session\n'
+        # "Last session" section is intentionally box-less so long summaries
+        # wrap cleanly under --preview-window=wrap (box-prefixed lines look
+        # broken when fzf wraps the value half-way through).
+        printf 'Last session\n\n'
         if [ -n "$latest" ]; then
-            printf '│  Name     %s\n' "${sname:-(unnamed)}"
-            printf '│  UUID     %s\n' "${uuid:0:8}"
-            printf '│  Updated  %s\n' "$age"
-            [ -n "$desc" ] && printf '│  Summary  %s\n' "$desc"
+            printf '  Name\n    %s\n\n' "${sname:-(unnamed)}"
+            printf '  UUID\n    %s\n\n' "${uuid:0:8}"
+            printf '  Updated\n    %s\n' "$age"
+            if [ -n "$desc" ]; then
+                printf '\n  Summary\n    %s\n' "$desc"
+            fi
         else
-            printf '│  (no sessions yet)\n'
+            printf '  (no sessions yet)\n'
         fi
-        printf '╰─\n'
     } > "$PREVIEW_CACHE_DIR/$area.txt"
 
-    area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "${sname:-—}"
+    area_row "$area_label" "${projects_dir:-?}" "$badge" "$age"
 }
 
 # Write the per-area session-list cache. Produces two parallel files:
@@ -294,53 +301,85 @@ build_session_cache() {
     printf 'NEW\n' >> "$uuids_file"
 }
 
-# Write the two toggle helper scripts once at startup. fzf preview/bind
-# commands can only call shell strings, not bash functions, so we keep these
-# on disk. Both read/write a tiny "h v f" state file that the launcher reads
-# back after fzf exits.
-write_toggle_helpers() {
+# Three helper scripts that back the menu-2 list. fzf bind/reload/transform
+# expressions can only invoke shell strings, so the logic lives on disk and
+# is shared across re-runs of fzf within the same script invocation.
+#
+#   view.sh         emits the full menu-2 row list to stdout, including a
+#                   visual separator and three flag rows with current state.
+#                   Used both for initial display and by every reload action.
+#
+#   flip.sh         given a row text and the toggle state file, identifies
+#                   which flag the row corresponds to and flips it in place.
+#
+#   enter_handler.sh  given a row text and the per-area paths, prints the
+#                     fzf action string that ENTER should execute for that
+#                     row — either flip+reload (flag row), ignore (separator),
+#                     or accept (session row). Run via fzf's transform()
+#                     action so the decision happens at fzf's exec time.
+write_view_helpers() {
+    cat > "$PREVIEW_CACHE_DIR/view.sh" <<'SH'
+#!/usr/bin/env bash
+# Args: <header_file> <session_rows_file> <toggle_state_file>
+# Header file contains the 3 table-header lines (top / labels / separator);
+# fzf pins them via --header-lines=3 so they stay frozen across reloads.
+set -u
+cat "$1"
+cat "$2"
+printf '\n'
+printf '  ── Flags ──  (RIGHT to focus · ENTER to toggle · LEFT to go back)\n'
+read -r h v f < "$3"
+ch() { [ "$1" = 1 ] && printf '[✓]' || printf '[ ]'; }
+printf '  %s  Headroom         token compression\n'    "$(ch "$h")"
+printf '  %s  Vertex AI        paid GCP project\n'     "$(ch "$v")"
+printf '  %s  FISS-MCP writes  agent can mutate Terra\n' "$(ch "$f")"
+SH
+    chmod +x "$PREVIEW_CACHE_DIR/view.sh"
+
     cat > "$PREVIEW_CACHE_DIR/flip.sh" <<'SH'
 #!/usr/bin/env bash
-# Flip one flag in the live state file. Args: <h|v|f> <state_file>
+# Args: <row_text> <toggle_state_file>
+# Identifies the flag from the row's label and flips it in the state file.
 set -u
-which=$1; sf=$2
+row=$1; sf=$2
 read -r h v f < "$sf"
-case "$which" in
-    h) h=$((1-h)) ;;
-    v) v=$((1-v)) ;;
-    f) f=$((1-f)) ;;
+case "$row" in
+    *Headroom*)          h=$((1-h)) ;;
+    *'Vertex AI'*)       v=$((1-v)) ;;
+    *'FISS-MCP writes'*) f=$((1-f)) ;;
 esac
 printf '%d %d %d\n' "$h" "$v" "$f" > "$sf"
 SH
     chmod +x "$PREVIEW_CACHE_DIR/flip.sh"
 
-    cat > "$PREVIEW_CACHE_DIR/render_toggles.sh" <<'SH'
+    cat > "$PREVIEW_CACHE_DIR/enter_handler.sh" <<'SH'
 #!/usr/bin/env bash
-# Render the right-pane toggle UI. Args: <state_file>
+# Args: <toggle_state_file> <header_file> <session_rows_file> <row_text>
+# Prints an fzf action expression. Designed to be invoked from
+# `--bind 'enter:transform(./enter_handler.sh ...)'`.
+#
+# Quoting note: fzf's transform output is parsed as the action grammar, so
+# parens / `+` / `,` in the embedded row text would break it. We pass the
+# row to the inner scripts via fzf's own {} template (re-expanded by fzf at
+# execute-time), not by interpolating $row into the output. The shell-side
+# `row` arg here is used ONLY to decide which action to emit.
 set -u
-read -r h v f < "$1"
-ch() { [ "$1" = 1 ] && printf '✓' || printf ' '; }
-H=$(ch "$h"); V=$(ch "$v"); F=$(ch "$f")
-cat <<MENU
-
-  Flags
-
-    [$H] Headroom         token compression
-    [$V] Vertex AI        paid GCP project
-    [$F] FISS-MCP writes  agent can mutate Terra
-
-  Toggle keys
-    Alt-H   Headroom
-    Alt-V   Vertex AI
-    Alt-F   FISS writes
-
-  Navigation
-    ENTER   launch selected
-    ESC     back to areas
-    CTRL-C  quit
-MENU
+toggle=$1; header=$2; sess=$3; shift 3; row=$*
+dir=$(dirname "$toggle")
+case "$row" in
+    *Headroom*|*'Vertex AI'*|*'FISS-MCP writes'*)
+        printf 'execute-silent(%s/flip.sh {} %s)+reload(%s/view.sh %s %s %s)' \
+            "$dir" "$toggle" "$dir" "$header" "$sess" "$toggle"
+        ;;
+    *'── Flags ──'*|'')
+        printf 'ignore'
+        ;;
+    *)
+        printf 'accept'
+        ;;
+esac
 SH
-    chmod +x "$PREVIEW_CACHE_DIR/render_toggles.sh"
+    chmod +x "$PREVIEW_CACHE_DIR/enter_handler.sh"
 }
 
 # Build every menu cache the launcher will navigate. Called once before the
@@ -360,7 +399,14 @@ build_all_caches() {
         AREA_INDEX+=("$area")
         build_session_cache "$area" "$now"
     done
-    write_toggle_helpers
+    # Session table header is the same for every area (constant widths),
+    # so write it once. view.sh emits it ahead of the data rows.
+    {
+        session_header_top
+        session_header_labels
+        session_header_sep
+    } > "$PREVIEW_CACHE_DIR/sessions.header"
+    write_view_helpers
 }
 
 # --- step 1: area picker -----------------------------------------------------
@@ -481,11 +527,21 @@ session_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─╮
 session_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $SW_NAME)" "$(hrule $SW_UUID)" "$(hrule $SW_AGE)" "$(hrule $SW_SUMMARY)"; }
 session_header_labels(){ session_row "NAME" "UUID" "LAST" "SUMMARY"; }
 
-# Combined session + flags picker. Session list comes from the per-area
-# cache file written by build_session_cache (newest first, "▶ NEW SESSION"
-# at the bottom). Toggle state lives in $PREVIEW_CACHE_DIR/toggles.<area>
-# — a three-int file mutated in place by flip.sh and rendered in fzf's
-# right preview pane by render_toggles.sh.
+# Combined session + flags picker. The fzf list is a single column
+# produced by view.sh: the per-area session rows on top, a visual separator,
+# then three flag rows reflecting the current toggle state. Navigation:
+#
+#   ↑/↓      step through the list
+#   RIGHT    jump cursor to the first flag row     (pos -3)
+#   LEFT     jump cursor to the first session row  (pos 1)
+#   ENTER    transform() decides per-row:
+#              - flag row      → flip + reload (cursor stays, state updates)
+#              - separator     → ignore
+#              - session/NEW   → accept (launcher resolves to UUID and execs)
+#   ESC      back to area picker
+#   CTRL-C   quit
+#
+# The transform action is fzf 0.42+.
 #
 # Returns 0 (sets CHOSEN_SESSION + HR/VX/FW + ENV_FILE + INITIAL_*),
 # 10 (ESC → back to area picker), 130 (Ctrl-C).
@@ -494,8 +550,9 @@ pick_session() {
     local toggle_file="$PREVIEW_CACHE_DIR/toggles.${CHOSEN_AREA}"
     local sess_rows="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.rows"
     local sess_uuids="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.uuids"
-    local flip_sh="$PREVIEW_CACHE_DIR/flip.sh"
-    local render_sh="$PREVIEW_CACHE_DIR/render_toggles.sh"
+    local hdr_file="$PREVIEW_CACHE_DIR/sessions.header"
+    local view_sh="$PREVIEW_CACHE_DIR/view.sh"
+    local enter_sh="$PREVIEW_CACHE_DIR/enter_handler.sh"
 
     # Reset toggle state from the env file on every entry into this screen.
     # In-session flips that didn't end in a launch (the user ESC-ed out)
@@ -508,32 +565,27 @@ pick_session() {
 
     local row rc=0
     row=$(
-        {
-            session_header_top
-            session_header_labels
-            session_header_sep
-            cat "$sess_rows"
-        } | fzf_pick \
+        "$view_sh" "$hdr_file" "$sess_rows" "$toggle_file" | fzf_pick \
             --prompt='  Session  ' \
-            --header="$(printf 'claude-sandbox  ·  %s  ·  pick session + flags\nENTER launch  ·  Alt-H/V/F flip flag  ·  ESC back  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
+            --header="$(printf 'claude-sandbox  ·  %s  ·  pick session + flags\n↑/↓ navigate  ·  RIGHT to flags  ·  LEFT to sessions  ·  ENTER act  ·  ESC back  ·  CTRL-C quit' "${CHOSEN_AREA}")" \
             --header-lines=3 \
-            --preview="$render_sh $toggle_file" \
-            --preview-window='right,42%,wrap,border-rounded' \
-            --bind="alt-h:execute-silent($flip_sh h $toggle_file)+refresh-preview" \
-            --bind="alt-v:execute-silent($flip_sh v $toggle_file)+refresh-preview" \
-            --bind="alt-f:execute-silent($flip_sh f $toggle_file)+refresh-preview" \
-            --height=85% \
+            --bind="right:pos(-3)" \
+            --bind="left:pos(1)" \
+            --bind="enter:transform($enter_sh $toggle_file $hdr_file $sess_rows {})" \
+            --height=90% \
             "${FZF_THEME[@]}"
     ) || rc=$?
 
     # Slurp the (possibly flipped) toggle state regardless of rc — harmless
-    # if the user ESC'd, and required if they pressed Enter.
+    # if the user ESC'd, and required if they pressed Enter on a session.
     read -r HR VX FW < "$toggle_file"
 
     [ $rc -ne 0 ] && return $rc
 
     # Resolve the chosen row → UUID by walking the rows + uuids files in
-    # parallel. fd 3 reads uuids while the main loop reads rows.
+    # parallel. fd 3 reads uuids while the main loop reads rows. The
+    # transform() bind guarantees the accepted row is a session row (or
+    # NEW SESSION), so a missing match here is a real bug.
     local line uuid="" found=""
     while IFS= read -r line; do
         IFS= read -r uuid <&3 || true
@@ -544,7 +596,7 @@ pick_session() {
     done < "$sess_rows" 3< "$sess_uuids"
 
     if [ -z "$found" ]; then
-        echo "ERROR: could not resolve session UUID." >&2
+        echo "ERROR: could not resolve session UUID from row '$row'." >&2
         return 130
     fi
     CHOSEN_SESSION=$found
