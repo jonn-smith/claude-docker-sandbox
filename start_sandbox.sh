@@ -39,6 +39,31 @@ command -v docker >/dev/null 2>&1 || {
     exit 1
 }
 
+# --- fzf wrapper that distinguishes Enter / ESC / Ctrl-C --------------------
+#
+# Echoes the selected row to stdout. Return codes:
+#   0   Enter pressed → stdout has row
+#   10  ESC pressed   → caller goes back one menu level
+#   130 Ctrl-C        → caller quits entirely
+#
+# Trick: `--expect=esc` keeps ESC from aborting fzf; fzf instead prints the
+# key name as the first stdout line ("" for Enter, "esc" for ESC), then the
+# selected row on line 2. Ctrl-C still aborts → exit 130 → distinguishable.
+fzf_pick() {
+    local out rc=0 key sel
+    out=$(fzf --expect=esc "$@") || rc=$?
+    if [ $rc -ne 0 ]; then
+        return 130   # ctrl-c or other abort
+    fi
+    key=$(printf '%s\n' "$out" | sed -n '1p')
+    sel=$(printf '%s\n' "$out" | sed -n '2p')
+    if [ "$key" = "esc" ]; then
+        return 10
+    fi
+    printf '%s\n' "$sel"
+    return 0
+}
+
 # --- styling -----------------------------------------------------------------
 #
 # Claude-CLI-ish amber palette + rounded borders. fzf does full-row highlight
@@ -140,38 +165,44 @@ area_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─┬─
 area_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $W_AREA)" "$(hrule $W_WORKDIR)" "$(hrule $W_FLAGS)" "$(hrule $W_AGE)" "$(hrule $W_NAME)"; }
 area_header_labels(){ area_row "AREA" "WORKDIR" "FLAGS" "LAST" "SESSION NAME"; }
 
-# Build the array of pretty rows + a parallel array of the bare area names
-# (for parsing the fzf selection later).
+# Build AREA_ROWS / AREA_INDEX from the on-disk env state. Re-runnable so the
+# area picker sees fresh badges + ages every time we go back to it.
 AREA_ROWS=()
 AREA_INDEX=()
-for area in "${AREAS[@]}"; do
-    envfile="$SCRIPT_DIR/env.${area}.sh"
-    state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
-    flags=$(sb_read_env_flags "$envfile")
-    IFS='|' read -r projects_dir hr fw vx <<<"$flags"
+build_area_rows() {
+    AREA_ROWS=()
+    AREA_INDEX=()
+    local area envfile state_dir flags projects_dir hr fw vx badge
+    local latest mt age sname cid area_label
+    for area in "${AREAS[@]}"; do
+        envfile="$SCRIPT_DIR/env.${area}.sh"
+        state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
+        flags=$(sb_read_env_flags "$envfile")
+        IFS='|' read -r projects_dir hr fw vx <<<"$flags"
 
-    badge=$(flag_badge "$hr" "$vx" "$fw")
+        badge=$(flag_badge "$hr" "$vx" "$fw")
 
-    latest=$(sb_latest_session_file "$state_dir/.claude/projects")
-    if [ -n "$latest" ]; then
-        mt=$(sb_mtime_of "$latest")
-        age=$(sb_fmt_age $(($(date +%s) - mt)))
-        sname=$(sb_session_name "$latest")
-        if [ -z "$sname" ]; then
-            sname=$(sb_session_description "$latest" || true)
-            [ -z "$sname" ] && sname='(unnamed)'
+        latest=$(sb_latest_session_file "$state_dir/.claude/projects")
+        if [ -n "$latest" ]; then
+            mt=$(sb_mtime_of "$latest")
+            age=$(sb_fmt_age $(($(date +%s) - mt)))
+            sname=$(sb_session_name "$latest")
+            if [ -z "$sname" ]; then
+                sname=$(sb_session_description "$latest" || true)
+                [ -z "$sname" ] && sname='(unnamed)'
+            fi
+        else
+            age='(none)'
+            sname='—'
         fi
-    else
-        age='(none)'
-        sname='—'
-    fi
 
-    cid=$(sb_running_cid "$area")
-    [ -n "$cid" ] && area_label="${area} *" || area_label="$area"
+        cid=$(sb_running_cid "$area")
+        [ -n "$cid" ] && area_label="${area} *" || area_label="$area"
 
-    AREA_ROWS+=("$(area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "$sname")")
-    AREA_INDEX+=("$area")
-done
+        AREA_ROWS+=("$(area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "$sname")")
+        AREA_INDEX+=("$area")
+    done
+}
 
 # --- area preview ------------------------------------------------------------
 #
@@ -245,62 +276,71 @@ export -f preview_area_wrapped sb_mtime_of sb_fmt_age sb_session_description \
 #
 # Header lines: top border / column titles / separator. --header-lines=3 keeps
 # them pinned and skips them during navigation.
+#
+# Returns 0 (sets CHOSEN_AREA), 10 (ESC, top-level so caller quits), or 130
+# (Ctrl-C). build_area_rows is re-run on each call so flag badges and ages
+# reflect any in-session env edits.
+pick_area() {
+    build_area_rows
 
-# fzf preview command needs the area NAME, not the whole table row. Extract
-# the second column (after "│ ") — strip surrounding whitespace.
-PREVIEW_CMD='area=$(printf "%s" {} | sed -E "s/^│ +([^ │]+).*/\1/; s/ \*$//"); preview_area_wrapped "$area"'
+    # fzf preview command needs the area NAME, not the whole table row.
+    # Extract the second column (after "│ ") — strip surrounding whitespace
+    # and the optional " *" running marker.
+    local preview_cmd
+    preview_cmd='area=$(printf "%s" {} | sed -E "s/^│ +([^ │]+).*/\1/; s/ \*$//"); preview_area_wrapped "$area"'
 
-CHOSEN_ROW=$(
-    {
-        area_header_top
-        area_header_labels
-        area_header_sep
-        printf '%s\n' "${AREA_ROWS[@]}"
-    } | fzf \
-        --prompt='  Sandbox  ' \
-        --header='claude-sandbox launcher · ↑/↓ navigate · ENTER select · ESC quit · "*" = running' \
-        --header-lines=3 \
-        --preview="$PREVIEW_CMD" \
-        --preview-window='right,55%,wrap,border-rounded' \
-        --height=90% \
-        "${FZF_THEME[@]}" \
-    || true
-)
+    local row rc=0
+    row=$(
+        {
+            area_header_top
+            area_header_labels
+            area_header_sep
+            printf '%s\n' "${AREA_ROWS[@]}"
+        } | fzf_pick \
+            --prompt='  Sandbox  ' \
+            --header='claude-sandbox · ↑/↓ navigate · ENTER select · ESC quit · CTRL-C quit · "*" = running' \
+            --header-lines=3 \
+            --preview="$preview_cmd" \
+            --preview-window='right,55%,wrap,border-rounded' \
+            --height=90% \
+            "${FZF_THEME[@]}"
+    ) || rc=$?
+    [ $rc -ne 0 ] && return $rc
 
-[[ -z "$CHOSEN_ROW" ]] && { echo "Cancelled."; exit 0; }
+    CHOSEN_AREA=$(printf '%s' "$row" | sed -E 's/^│ +([^ │]+).*/\1/; s/ \*$//')
+    local a found=0
+    for a in "${AREA_INDEX[@]}"; do
+        [ "$a" = "$CHOSEN_AREA" ] && { found=1; break; }
+    done
+    [ $found = 1 ] || { echo "ERROR: could not parse area name from row '$row'." >&2; return 130; }
+    return 0
+}
 
-# Parse the area name out of "│ B       │ …" — second column after the leading "│".
-CHOSEN_AREA=$(printf '%s' "$CHOSEN_ROW" | sed -E 's/^│ +([^ │]+).*/\1/; s/ \*$//')
-
-# Sanity check: make sure the parsed name is in AREA_INDEX.
-found=0
-for a in "${AREA_INDEX[@]}"; do
-    [ "$a" = "$CHOSEN_AREA" ] && { found=1; break; }
-done
-[ "$found" = 1 ] || { echo "ERROR: could not parse area name from row '$CHOSEN_ROW'." >&2; exit 1; }
-
-# --- block if already running ------------------------------------------------
-
-RUNNING_CID=$(sb_running_cid "$CHOSEN_AREA")
-if [ -n "$RUNNING_CID" ]; then
-    echo "ERROR: sandbox '${CHOSEN_AREA}' is already running (container ${RUNNING_CID:0:12})." >&2
-    echo "       Use 'docker exec -it claude-sandbox-${CHOSEN_AREA} bash' to attach," >&2
-    echo "       or stop it first with 'docker stop claude-sandbox-${CHOSEN_AREA}'." >&2
-    exit 1
-fi
+# --- step 1.5: refuse if the area is already running -------------------------
+# Returns 0 if free, 10 if running (caller goes back to area picker so the
+# user can pick a different one without restarting the script).
+check_not_running() {
+    local cid
+    cid=$(sb_running_cid "$CHOSEN_AREA")
+    [ -z "$cid" ] && return 0
+    echo "Sandbox '${CHOSEN_AREA}' is already running (container ${cid:0:12})." >&2
+    echo "  Attach with:  docker exec -it claude-sandbox-${CHOSEN_AREA} bash" >&2
+    echo "  Or stop:      docker stop claude-sandbox-${CHOSEN_AREA}" >&2
+    echo "Returning to area picker." >&2
+    return 10
+}
 
 # --- step 2: toggle loop -----------------------------------------------------
 
-ENV_FILE="$SCRIPT_DIR/env.${CHOSEN_AREA}.sh"
-FLAGS_LINE=$(sb_read_env_flags "$ENV_FILE")
-IFS='|' read -r INITIAL_PROJECTS_DIR INITIAL_HR INITIAL_FW INITIAL_VX <<<"$FLAGS_LINE"
-
-HR=$INITIAL_HR
-VX=$INITIAL_VX
-FW=$INITIAL_FW
+load_toggle_state() {
+    ENV_FILE="$SCRIPT_DIR/env.${CHOSEN_AREA}.sh"
+    local flags_line
+    flags_line=$(sb_read_env_flags "$ENV_FILE")
+    IFS='|' read -r INITIAL_PROJECTS_DIR INITIAL_HR INITIAL_FW INITIAL_VX <<<"$flags_line"
+    HR=$INITIAL_HR; VX=$INITIAL_VX; FW=$INITIAL_FW
+}
 
 TW=58   # toggle table width
-
 toggle_top()  { printf '╭─%s─╮\n' "$(hrule $TW)"; }
 toggle_sep()  { printf '├─%s─┤\n' "$(hrule $TW)"; }
 toggle_bot()  { printf '╰─%s─╯\n' "$(hrule $TW)"; }
@@ -311,54 +351,50 @@ toggle_row()  {
     printf '│ %s %-1s %-16s %-*s │\n' "$box" "$short" "$label" $((TW - 26)) "$hint"
 }
 
-render_toggle_menu() {
-    toggle_top
-    printf '│ %-*s │\n' "$TW" "Flags for sandbox '${CHOSEN_AREA}'"
-    toggle_sep
-    toggle_row "$HR" "H" "Headroom"        "token compression proxy"
-    toggle_row "$VX" "V" "Vertex AI"       "route via host GCP project (paid)"
-    toggle_row "$FW" "F" "FISS-MCP writes" "agent can mutate Terra state"
-    toggle_sep
-    printf '│ %-*s │\n' "$TW" "▶  Launch sandbox"
-    toggle_bot
+# Returns 0 = Launch chosen, 10 = ESC (back to area), 130 = Ctrl-C.
+pick_toggles() {
+    local pick rc
+    while true; do
+        rc=0
+        pick=$(
+            {
+                toggle_top
+                printf '│ %-*s │\n' "$TW" "Flags for sandbox '${CHOSEN_AREA}'"
+                toggle_sep
+                toggle_row "$HR" "H" "Headroom"        "token compression proxy"
+                toggle_row "$VX" "V" "Vertex AI"       "route via host GCP project (paid)"
+                toggle_row "$FW" "F" "FISS-MCP writes" "agent can mutate Terra state"
+                toggle_sep
+                printf '│ %-*s │\n' "$TW" "▶  Launch sandbox"
+                toggle_bot
+            } | fzf_pick \
+                --prompt='  Toggle  ' \
+                --header="claude-sandbox · ${CHOSEN_AREA} · ENTER flip/launch · ESC back · CTRL-C quit" \
+                --header-lines=3 \
+                --no-multi \
+                --height=50% \
+                "${FZF_THEME[@]}"
+        ) || rc=$?
+
+        case $rc in
+            10|130) return $rc ;;
+            0)
+                case "$pick" in
+                    *Headroom*)          HR=$((1 - HR)) ;;
+                    *'Vertex AI'*)       VX=$((1 - VX)) ;;
+                    *'FISS-MCP writes'*) FW=$((1 - FW)) ;;
+                    *'Launch sandbox'*)  return 0 ;;
+                    *) : ;;
+                esac
+                ;;
+        esac
+    done
 }
 
-# Build a list of selectable labels parallel to render_toggle_menu (only the
-# rows that the user can act on — toggles + Launch). The decorative box lines
-# are pinned as header.
-while true; do
-    PICK=$(
-        {
-            render_toggle_menu | head -3   # top border + title + separator
-            toggle_row "$HR" "H" "Headroom"        "token compression proxy"
-            toggle_row "$VX" "V" "Vertex AI"       "route via host GCP project (paid)"
-            toggle_row "$FW" "F" "FISS-MCP writes" "agent can mutate Terra state"
-            toggle_sep
-            printf '│ %-*s │\n' "$TW" "▶  Launch sandbox"
-            toggle_bot
-        } | fzf \
-            --prompt='  Toggle  ' \
-            --header="claude-sandbox · ${CHOSEN_AREA} · ENTER to flip / launch · ESC to cancel" \
-            --header-lines=3 \
-            --no-multi \
-            --height=50% \
-            "${FZF_THEME[@]}" \
-        || echo '__CANCEL__'
-    )
-
-    case "$PICK" in
-        '__CANCEL__'|'')                    echo "Cancelled."; exit 0 ;;
-        *Headroom*)                         HR=$((1 - HR)) ;;
-        *'Vertex AI'*)                      VX=$((1 - VX)) ;;
-        *'FISS-MCP writes'*)                FW=$((1 - FW)) ;;
-        *'Launch sandbox'*)                 break ;;
-        *)                                  : ;;   # decorative line, ignore
-    esac
-done
-
 # --- persist toggles via managed block (only if changed) ---------------------
-
-if [[ "$HR" != "$INITIAL_HR" || "$VX" != "$INITIAL_VX" || "$FW" != "$INITIAL_FW" ]]; then
+persist_toggles() {
+    [[ "$HR" = "$INITIAL_HR" && "$VX" = "$INITIAL_VX" && "$FW" = "$INITIAL_FW" ]] && return 0
+    local NEW_BLOCK TMP
     NEW_BLOCK=$(
         echo "$MARK_BEGIN"
         echo "# Managed by start_sandbox.sh — toggle via the menu, not by hand."
@@ -392,13 +428,13 @@ if [[ "$HR" != "$INITIAL_HR" || "$VX" != "$INITIAL_VX" || "$FW" != "$INITIAL_FW"
     rm -f "$TMP"
 
     echo "Updated env.${CHOSEN_AREA}.sh: Headroom=$HR Vertex=$VX FISS_writes=$FW"
-fi
+    # Sync baseline so a later round-trip through this menu doesn't re-write
+    # the block when nothing further changed.
+    INITIAL_HR=$HR; INITIAL_VX=$VX; INITIAL_FW=$FW
+}
 
 # --- step 3: session picker --------------------------------------------------
 
-STATE_DIR="$SCRIPT_DIR/claude-sandbox-persistent-state-${CHOSEN_AREA}/.claude/projects"
-
-# Column widths.
 SW_NAME=22
 SW_UUID=8
 SW_AGE=10
@@ -416,61 +452,108 @@ session_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─╮
 session_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $SW_NAME)" "$(hrule $SW_UUID)" "$(hrule $SW_AGE)" "$(hrule $SW_SUMMARY)"; }
 session_header_labels(){ session_row "NAME" "UUID" "LAST" "SUMMARY"; }
 
-# Parallel arrays: pretty row + full session uuid (or sentinel "NEW").
-SESSION_ROWS=()
-SESSION_UUIDS=()
+# Returns 0 (sets CHOSEN_SESSION), 10 (ESC back to toggle), 130 (Ctrl-C).
+pick_session() {
+    local state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${CHOSEN_AREA}/.claude/projects"
 
-SESSION_ROWS+=("$(session_row "▶ NEW SESSION" "" "" "Start a fresh conversation")")
-SESSION_UUIDS+=("NEW")
+    SESSION_ROWS=()
+    SESSION_UUIDS=()
+    SESSION_ROWS+=("$(session_row "▶ NEW SESSION" "" "" "Start a fresh conversation")")
+    SESSION_UUIDS+=("NEW")
 
-if [ -d "$STATE_DIR" ]; then
-    NOW=$(date +%s)
-    while IFS=$'\t' read -r mt f; do
-        uuid=$(basename "$f" .jsonl)
-        age=$(sb_fmt_age $((NOW - mt)))
-        name=$(sb_session_name "$f")
-        desc=$(sb_session_description "$f" || true)
-        [ -z "$desc" ] && desc='(no summary)'
-        [ -z "$name" ] && name='(unnamed)'
-        SESSION_ROWS+=("$(session_row "$name" "$uuid" "$age" "$desc")")
-        SESSION_UUIDS+=("$uuid")
-    done < <(sb_list_sessions "$STATE_DIR" | sort -rn | head -30)
-fi
-
-# fzf with header lines pinned. Map back to the chosen UUID by row index — we
-# get fzf to emit "{n} <row>" via --with-nth and parse the index. But easier:
-# print rows prefixed with their array index, hide the index column via
-# --with-nth, then take it back via --bind on enter? Simpler still: re-walk
-# the array by matching the full row string.
-
-CHOSEN_ROW=$(
-    {
-        session_header_top
-        session_header_labels
-        session_header_sep
-        printf '%s\n' "${SESSION_ROWS[@]}"
-    } | fzf \
-        --prompt='  Session  ' \
-        --header="claude-sandbox · ${CHOSEN_AREA} · pick NEW or a session to resume · ESC to cancel" \
-        --header-lines=3 \
-        --height=80% \
-        "${FZF_THEME[@]}" \
-    || true
-)
-
-[[ -z "$CHOSEN_ROW" ]] && { echo "Cancelled."; exit 0; }
-
-# Resolve the row back to its UUID by scanning the parallel arrays.
-CHOSEN_SESSION=""
-for i in "${!SESSION_ROWS[@]}"; do
-    if [ "${SESSION_ROWS[$i]}" = "$CHOSEN_ROW" ]; then
-        CHOSEN_SESSION="${SESSION_UUIDS[$i]}"
-        break
+    if [ -d "$state_dir" ]; then
+        local now mt f uuid age name desc
+        now=$(date +%s)
+        while IFS=$'\t' read -r mt f; do
+            uuid=$(basename "$f" .jsonl)
+            age=$(sb_fmt_age $((now - mt)))
+            name=$(sb_session_name "$f")
+            desc=$(sb_session_description "$f" || true)
+            [ -z "$desc" ] && desc='(no summary)'
+            [ -z "$name" ] && name='(unnamed)'
+            SESSION_ROWS+=("$(session_row "$name" "$uuid" "$age" "$desc")")
+            SESSION_UUIDS+=("$uuid")
+        done < <(sb_list_sessions "$state_dir" | sort -rn | head -30)
     fi
-done
-[ -n "$CHOSEN_SESSION" ] || { echo "ERROR: could not resolve session UUID from row." >&2; exit 1; }
 
-# --- step 4: source env, exec launcher ---------------------------------------
+    local row rc=0
+    row=$(
+        {
+            session_header_top
+            session_header_labels
+            session_header_sep
+            printf '%s\n' "${SESSION_ROWS[@]}"
+        } | fzf_pick \
+            --prompt='  Session  ' \
+            --header="claude-sandbox · ${CHOSEN_AREA} · ENTER select · ESC back · CTRL-C quit" \
+            --header-lines=3 \
+            --height=80% \
+            "${FZF_THEME[@]}"
+    ) || rc=$?
+    [ $rc -ne 0 ] && return $rc
+
+    CHOSEN_SESSION=""
+    local i
+    for i in "${!SESSION_ROWS[@]}"; do
+        if [ "${SESSION_ROWS[$i]}" = "$row" ]; then
+            CHOSEN_SESSION="${SESSION_UUIDS[$i]}"
+            break
+        fi
+    done
+    [ -n "$CHOSEN_SESSION" ] || { echo "ERROR: could not resolve session UUID." >&2; return 130; }
+    return 0
+}
+
+# --- main state machine ------------------------------------------------------
+#
+# Transitions: area → running_check → toggle → session → launch.
+# ESC at any step: back one step (except area, which is top-level → quit).
+# Ctrl-C anywhere: quit.
+
+CHOSEN_AREA=""
+CHOSEN_SESSION=""
+ENV_FILE=""
+STAGE=area
+while true; do
+    rc=0
+    case "$STAGE" in
+        area)
+            pick_area || rc=$?
+            case $rc in
+                0)        STAGE=running_check ;;
+                10|130|*) echo "Cancelled."; exit 0 ;;
+            esac
+            ;;
+        running_check)
+            check_not_running || rc=$?
+            case $rc in
+                0)  load_toggle_state; STAGE=toggle ;;
+                10) STAGE=area ;;
+                *)  exit $rc ;;
+            esac
+            ;;
+        toggle)
+            pick_toggles || rc=$?
+            case $rc in
+                0)   persist_toggles; STAGE=session ;;
+                10)  STAGE=area ;;
+                130) echo "Aborted."; exit 130 ;;
+                *)   exit $rc ;;
+            esac
+            ;;
+        session)
+            pick_session || rc=$?
+            case $rc in
+                0)   break ;;
+                10)  STAGE=toggle ;;
+                130) echo "Aborted."; exit 130 ;;
+                *)   exit $rc ;;
+            esac
+            ;;
+    esac
+done
+
+# --- launch ------------------------------------------------------------------
 
 # shellcheck source=/dev/null
 source "$ENV_FILE"
