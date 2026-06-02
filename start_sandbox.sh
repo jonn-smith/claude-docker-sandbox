@@ -310,7 +310,8 @@ build_session_cache() {
 #   flip.sh   given a row text and the toggle state file, identifies which
 #             flag the row corresponds to and flips it in place.
 write_view_helpers() {
-    cat > "$PREVIEW_CACHE_DIR/view.sh" <<'SH'
+    mkdir -p "$PREVIEW_CACHE_DIR/bin"
+    cat > "$PREVIEW_CACHE_DIR/bin/view.sh" <<'SH'
 #!/usr/bin/env bash
 # Args: <header_file> <session_rows_file> <toggle_state_file>
 # Header file contains the 3 table-header lines (top / labels / separator);
@@ -326,9 +327,9 @@ printf '  %s  Headroom         token compression\n'    "$(ch "$h")"
 printf '  %s  Vertex AI        paid GCP project\n'     "$(ch "$v")"
 printf '  %s  FISS-MCP writes  agent can mutate Terra\n' "$(ch "$f")"
 SH
-    chmod +x "$PREVIEW_CACHE_DIR/view.sh"
+    chmod +x "$PREVIEW_CACHE_DIR/bin/view.sh"
 
-    cat > "$PREVIEW_CACHE_DIR/flip.sh" <<'SH'
+    cat > "$PREVIEW_CACHE_DIR/bin/flip.sh" <<'SH'
 #!/usr/bin/env bash
 # Args: <row_text> <toggle_state_file>
 # Identifies the flag from the row's label and flips it in the state file.
@@ -342,7 +343,7 @@ case "$row" in
 esac
 printf '%d %d %d\n' "$h" "$v" "$f" > "$sf"
 SH
-    chmod +x "$PREVIEW_CACHE_DIR/flip.sh"
+    chmod +x "$PREVIEW_CACHE_DIR/bin/flip.sh"
 
 }
 
@@ -515,8 +516,8 @@ pick_session() {
     local sess_rows="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.rows"
     local sess_uuids="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.uuids"
     local hdr_file="$PREVIEW_CACHE_DIR/sessions.header"
-    local view_sh="$PREVIEW_CACHE_DIR/view.sh"
-    local flip_sh="$PREVIEW_CACHE_DIR/flip.sh"
+    local view_sh="$PREVIEW_CACHE_DIR/bin/view.sh"
+    local flip_sh="$PREVIEW_CACHE_DIR/bin/flip.sh"
 
     # Reset toggle state from the env file on entry. In-session flips that
     # don't end in a launch (user ESC-ed out) therefore evaporate.
