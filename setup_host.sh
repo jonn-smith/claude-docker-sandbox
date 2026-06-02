@@ -8,7 +8,7 @@ set -euo pipefail
 echo "Installing essential packages..."
 
 sudo apt update
-sudo apt-get install -y git curl vim build-essential
+sudo apt-get install -y git curl vim build-essential fzf
 
 ################################################################################
 

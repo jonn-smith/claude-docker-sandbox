@@ -14,6 +14,11 @@ fi
 set -euo pipefail
 shopt -s globstar nullglob
 
+# Shared helpers (sb_fmt_age, sb_session_description, sb_mtime_of, …).
+__LS_SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=sandbox_lib.sh
+source "$__LS_SCRIPT_DIR/sandbox_lib.sh"
+
 CIDS=()
 while IFS= read -r cid; do
     [ -n "$cid" ] && CIDS+=("$cid")
@@ -43,71 +48,7 @@ mount_volume_for() {
         "$cid"
 }
 
-# Cross-platform mtime in seconds since epoch (BSD stat on macOS, GNU on Linux).
-mtime_of() {
-    stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null
-}
-
-fmt_age() {
-    local s=$1
-    if   [ "$s" -lt 60 ];    then printf "%ds ago" "$s"
-    elif [ "$s" -lt 3600 ];  then printf "%dm ago" "$((s/60))"
-    elif [ "$s" -lt 86400 ]; then printf "%dh ago" "$((s/3600))"
-    else                          printf "%dd ago" "$((s/86400))"
-    fi
-}
-
-# Pull a description for the session: prefer the Claude-generated `summary`
-# line; fall back to the first user-prompt text. Truncated to 80 chars.
-# Skipped silently if python3 isn't available.
-session_description() {
-    local jsonl=$1
-    command -v python3 >/dev/null 2>&1 || return 0
-    python3 - "$jsonl" <<'PY'
-import json, sys
-LIMIT = 80
-def trim(s):
-    s = ' '.join(s.split())
-    return s if len(s) <= LIMIT else s[:LIMIT-1] + '…'
-summary = None
-first_user = None
-try:
-    with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(o, dict):
-                continue
-            if summary is None and o.get('type') == 'summary':
-                s = o.get('summary')
-                if isinstance(s, str) and s.strip():
-                    summary = s.strip()
-                    break  # summary wins, stop scanning
-            if first_user is None and o.get('type') == 'user':
-                msg = o.get('message') or {}
-                c = msg.get('content')
-                if isinstance(c, str) and c.strip():
-                    first_user = c.strip()
-                elif isinstance(c, list):
-                    for part in c:
-                        if isinstance(part, dict) and part.get('type') == 'text':
-                            t = (part.get('text') or '').strip()
-                            if t:
-                                first_user = t
-                                break
-except FileNotFoundError:
-    pass
-if summary:
-    print(trim(summary))
-elif first_user:
-    print(trim(first_user))
-PY
-}
+# mtime_of, fmt_age, session_description now live in sandbox_lib.sh.
 
 now=$(date +%s)
 
@@ -127,25 +68,18 @@ for cid in "${CIDS[@]}"; do
     home=$(mount_source_for "$cid" /home/claude/.claude)
     dind=$(mount_volume_for "$cid" /var/lib/docker)
 
-    # Active session = most-recently-modified .jsonl under projects/ on the host.
+    # Active session = most-recently-modified top-level .jsonl under projects/.
+    # sb_latest_session_file skips subagent transcripts.
     session_uuid="(none)"
     session_age=""
     session_desc=""
     if [ -n "$home" ] && [ -d "$home/projects" ]; then
-        latest=""
-        latest_mt=0
-        for f in "$home/projects"/**/*.jsonl; do
-            mt=$(mtime_of "$f")
-            [ -n "$mt" ] || continue
-            if [ "$mt" -gt "$latest_mt" ]; then
-                latest_mt=$mt
-                latest=$f
-            fi
-        done
+        latest=$(sb_latest_session_file "$home/projects")
         if [ -n "$latest" ]; then
+            latest_mt=$(sb_mtime_of "$latest")
             session_uuid=$(basename "$latest" .jsonl)
-            session_age=$(fmt_age "$((now - latest_mt))")
-            session_desc=$(session_description "$latest" || true)
+            session_age=$(sb_fmt_age "$((now - latest_mt))")
+            session_desc=$(sb_session_description "$latest" || true)
         fi
     fi
 
