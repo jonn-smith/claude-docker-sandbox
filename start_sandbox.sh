@@ -39,6 +39,14 @@ command -v docker >/dev/null 2>&1 || {
     exit 1
 }
 
+# Preview pane content is precomputed into one file per area (see
+# build_area_rows). Without this cache, every cursor move would re-spawn
+# `docker ps` + two python3 invocations per highlight — ~150–300ms of lag
+# that makes the picker feel sluggish.
+PREVIEW_CACHE_DIR="$(mktemp -d -t claude-sandbox-preview.XXXXXX)"
+export PREVIEW_CACHE_DIR
+trap 'rm -rf "$PREVIEW_CACHE_DIR"' EXIT
+
 # --- fzf wrapper that distinguishes Enter / ESC / Ctrl-C --------------------
 #
 # Echoes the selected row to stdout. Return codes:
@@ -71,7 +79,10 @@ fzf_pick() {
 # arrow pointer. ANSI hex colors work in any 24-bit terminal; older terms get
 # the closest 256-color fallback automatically.
 
-# Common fzf flags shared by every picker so they look like a set.
+# Common fzf flags shared by every picker so they look like a set. Selection
+# uses a vivid amber background with near-black bold text so the current row
+# really pops — the previous palette only changed the foreground bold weight
+# and the row was hard to spot against the grey table.
 FZF_THEME=(
     --border=rounded
     --pointer='▶'
@@ -80,7 +91,7 @@ FZF_THEME=(
     --layout=reverse
     --no-mouse
     --cycle
-    --color='border:#d97757,header:#d97757,prompt:#d97757,pointer:#d97757,marker:#d97757,info:#7f7f7f,fg:#cdd6f4,fg+:#ffffff:bold,bg+:#3a3a3a,hl:#d97757,hl+:#ffd49a,spinner:#d97757,label:#d97757'
+    --color='border:#d97757,label:#d97757:bold,header:#f4a460:italic,prompt:#ffb380:bold,query:#ffd49a:bold,pointer:#1c1917:bold,marker:#1c1917:bold,info:#a08070,spinner:#ffb380,fg:#e5dccc,fg+:#1c1917:bold,bg+:#d97757,gutter:-1,hl:#f4a460,hl+:#5c1a05:bold'
 )
 
 # Column widths (so the area-picker rows align as a real ASCII table).
@@ -201,6 +212,11 @@ build_area_rows() {
 
         AREA_ROWS+=("$(area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "$sname")")
         AREA_INDEX+=("$area")
+
+        # Cache preview content so cursor motion is instant. preview_area
+        # re-derives this data from scratch; spending the cost once here is
+        # vastly cheaper than respawning docker+python on every keystroke.
+        preview_area "$area" > "$PREVIEW_CACHE_DIR/$area.txt"
     done
 }
 
@@ -261,16 +277,9 @@ preview_area() {
     fi
     printf '╰─\n'
 }
-export -f preview_area
-export SCRIPT_DIR
-preview_area_wrapped() {
-    # shellcheck source=sandbox_lib.sh
-    source "$SCRIPT_DIR/sandbox_lib.sh"
-    preview_area "$1"
-}
-export -f preview_area_wrapped sb_mtime_of sb_fmt_age sb_session_description \
-          sb_session_name sb_read_env_flags sb_latest_session_file \
-          sb_list_sessions sb_running_cid
+# preview_area runs in the parent shell now (called by build_area_rows to
+# populate the on-disk cache). The fzf preview process only needs `cat`, so
+# we no longer export helpers/SCRIPT_DIR into the fzf child environment.
 
 # --- step 1: area picker -----------------------------------------------------
 #
@@ -285,9 +294,10 @@ pick_area() {
 
     # fzf preview command needs the area NAME, not the whole table row.
     # Extract the second column (after "│ ") — strip surrounding whitespace
-    # and the optional " *" running marker.
+    # and the optional " *" running marker. Content is already on disk;
+    # preview just cats the cache file, so cursor motion is near-instant.
     local preview_cmd
-    preview_cmd='area=$(printf "%s" {} | sed -E "s/^│ +([^ │]+).*/\1/; s/ \*$//"); preview_area_wrapped "$area"'
+    preview_cmd='area=$(printf "%s" {} | sed -E "s/^│ +([^ │]+).*/\1/; s/ \*$//"); cat "$PREVIEW_CACHE_DIR/$area.txt" 2>/dev/null'
 
     local row rc=0
     row=$(
