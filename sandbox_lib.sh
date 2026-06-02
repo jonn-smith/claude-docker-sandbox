@@ -51,6 +51,65 @@ except FileNotFoundError:
 PY
 }
 
+# Combined name + description in a single python3 invocation. Cuts startup
+# cost roughly in half versus calling sb_session_name + sb_session_description
+# separately (each fork is ~30-40 ms; the launcher does this once per area
+# and once per recent session). Prints one line: "<name>\t<desc>".
+# Either field may be empty.
+sb_session_meta() {
+    local jsonl=$1
+    command -v python3 >/dev/null 2>&1 || { printf '\t\n'; return 0; }
+    python3 - "$jsonl" <<'PY'
+import json, sys
+LIMIT = 80
+def trim(s):
+    s = ' '.join(s.split())
+    return s if len(s) <= LIMIT else s[:LIMIT-1] + '…'
+name = None
+summary = None
+first_user = None
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(o, dict):
+                continue
+            t = o.get('type')
+            if name is None and t == 'custom-title':
+                v = o.get('customTitle')
+                if isinstance(v, str) and v.strip():
+                    name = v.strip()
+            elif summary is None and t == 'summary':
+                v = o.get('summary')
+                if isinstance(v, str) and v.strip():
+                    summary = v.strip()
+            elif first_user is None and t == 'user':
+                msg = o.get('message') or {}
+                c = msg.get('content')
+                if isinstance(c, str) and c.strip():
+                    first_user = c.strip()
+                elif isinstance(c, list):
+                    for part in c:
+                        if isinstance(part, dict) and part.get('type') == 'text':
+                            tx = (part.get('text') or '').strip()
+                            if tx:
+                                first_user = tx
+                                break
+            if name and summary:
+                break  # both fields filled — no need to keep scanning
+except FileNotFoundError:
+    pass
+desc = summary or first_user or ''
+print((name or '') + '\t' + (trim(desc) if desc else ''))
+PY
+}
+
 # Pull a description for a session jsonl: prefer Claude-generated `summary`
 # line; fall back to first user-prompt text. Truncated to 80 chars.
 # Silent no-op if python3 missing.
@@ -162,4 +221,13 @@ sb_list_sessions() {
 sb_running_cid() {
     local instance=$1
     docker ps --filter "name=^claude-sandbox-${instance}$" -q 2>/dev/null
+}
+
+# Print, one per line, the area names of every running claude-sandbox
+# container. Single docker call — callers that need to check N areas should
+# read this once rather than calling sb_running_cid in a loop (each docker
+# fork is ~50-150 ms).
+sb_running_areas() {
+    docker ps --filter ancestor=claude-sandbox --format '{{.Names}}' 2>/dev/null \
+        | sed -n 's/^claude-sandbox-\(.*\)$/\1/p'
 }

@@ -79,10 +79,18 @@ fzf_pick() {
 # arrow pointer. ANSI hex colors work in any 24-bit terminal; older terms get
 # the closest 256-color fallback automatically.
 
-# Common fzf flags shared by every picker so they look like a set. Selection
-# uses a vivid amber background with near-black bold text so the current row
-# really pops — the previous palette only changed the foreground bold weight
-# and the row was hard to spot against the grey table.
+# Common fzf flags shared by every picker so they look like a set.
+#
+# Palette uses xterm-256 indices, no style modifiers, and one
+# attribute per --color flag. Hex colors (#rrggbb) require fzf 0.32+;
+# `:bold` / `:italic` modifiers require fzf 0.31+. When fzf rejects any
+# token in a bundled `--color=a:x,b:y` string it silently falls back to
+# its defaults — which is why earlier attempts produced a blue header
+# and a grey selection bar. Splitting one attribute per flag means at
+# most one entry gets dropped on older fzf instead of the whole theme.
+#
+# Selection contrast: bg+ uses bright orange (208) with near-black fg+
+# (232) — the current row should be unmissable, not merely bold.
 FZF_THEME=(
     --border=rounded
     --pointer='▶'
@@ -91,7 +99,20 @@ FZF_THEME=(
     --layout=reverse
     --no-mouse
     --cycle
-    --color='border:#d97757,label:#d97757:bold,header:#f4a460:italic,prompt:#ffb380:bold,query:#ffd49a:bold,pointer:#1c1917:bold,marker:#1c1917:bold,info:#a08070,spinner:#ffb380,fg:#e5dccc,fg+:#1c1917:bold,bg+:#d97757,gutter:-1,hl:#f4a460,hl+:#5c1a05:bold'
+    --color=border:214
+    --color=label:214
+    --color=header:215
+    --color=prompt:214
+    --color=query:230
+    --color=pointer:232
+    --color=marker:232
+    --color=info:240
+    --color=spinner:214
+    --color=fg:230
+    --color=fg+:232
+    --color=bg+:208
+    --color=hl:215
+    --color=hl+:88
 )
 
 # Column widths (so the area-picker rows align as a real ASCII table).
@@ -176,15 +197,30 @@ area_header_top()   { printf '╭─%s─┬─%s─┬─%s─┬─%s─┬─
 area_header_sep()   { printf '├─%s─┼─%s─┼─%s─┼─%s─┼─%s─┤\n' "$(hrule $W_AREA)" "$(hrule $W_WORKDIR)" "$(hrule $W_FLAGS)" "$(hrule $W_AGE)" "$(hrule $W_NAME)"; }
 area_header_labels(){ area_row "AREA" "WORKDIR" "FLAGS" "LAST" "SESSION NAME"; }
 
-# Build AREA_ROWS / AREA_INDEX from the on-disk env state. Re-runnable so the
-# area picker sees fresh badges + ages every time we go back to it.
+# Build AREA_ROWS / AREA_INDEX from the on-disk env state, and populate
+# $PREVIEW_CACHE_DIR/<area>.txt so the fzf preview command can just `cat`.
+# Re-runnable so the area picker sees fresh badges + ages every time we go
+# back to it.
+#
+# Performance notes (kept rough but the win is real):
+#   - One docker call total via sb_running_areas, not N (was the dominant cost).
+#   - One python3 fork per area via sb_session_meta, not two.
+#   - Preview content is rendered INLINE from the locals we already gathered,
+#     not by re-calling preview_area() which would re-fork docker+python.
 AREA_ROWS=()
 AREA_INDEX=()
 build_area_rows() {
     AREA_ROWS=()
     AREA_INDEX=()
+
+    # Batched running-area lookup. Format as a space-padded string so the
+    # membership test below is a single substring match, no inner loop.
+    local running_set
+    running_set=" $(sb_running_areas | tr '\n' ' ') "
+
     local area envfile state_dir flags projects_dir hr fw vx badge
-    local latest mt age sname cid area_label
+    local latest mt age sname desc uuid area_label status now
+    now=$(date +%s)
     for area in "${AREAS[@]}"; do
         envfile="$SCRIPT_DIR/env.${area}.sh"
         state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
@@ -194,92 +230,55 @@ build_area_rows() {
         badge=$(flag_badge "$hr" "$vx" "$fw")
 
         latest=$(sb_latest_session_file "$state_dir/.claude/projects")
+        sname=""; desc=""; uuid=""; age='(none)'
         if [ -n "$latest" ]; then
             mt=$(sb_mtime_of "$latest")
-            age=$(sb_fmt_age $(($(date +%s) - mt)))
-            sname=$(sb_session_name "$latest")
-            if [ -z "$sname" ]; then
-                sname=$(sb_session_description "$latest" || true)
-                [ -z "$sname" ] && sname='(unnamed)'
-            fi
-        else
-            age='(none)'
-            sname='—'
+            age=$(sb_fmt_age $((now - mt)))
+            uuid=$(basename "$latest" .jsonl)
+            IFS=$'\t' read -r sname desc <<<"$(sb_session_meta "$latest")"
+            [ -z "$sname" ] && sname=${desc:-'(unnamed)'}
         fi
 
-        cid=$(sb_running_cid "$area")
-        [ -n "$cid" ] && area_label="${area} *" || area_label="$area"
+        if [[ "$running_set" == *" $area "* ]]; then
+            area_label="${area} *"
+            status="RUNNING"
+        else
+            area_label="$area"
+            status="not running"
+        fi
 
-        AREA_ROWS+=("$(area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "$sname")")
+        AREA_ROWS+=("$(area_row "$area_label" "${projects_dir:-?}" "$badge" "$age" "${sname:-—}")")
         AREA_INDEX+=("$area")
 
-        # Cache preview content so cursor motion is instant. preview_area
-        # re-derives this data from scratch; spending the cost once here is
-        # vastly cheaper than respawning docker+python on every keystroke.
-        preview_area "$area" > "$PREVIEW_CACHE_DIR/$area.txt"
+        # Inline preview render. All data already in locals — zero extra forks.
+        {
+            printf '╭─ Sandbox %s\n' "$area"
+            printf '│  Env file   env.%s.sh\n' "$area"
+            printf '│  Workdir    %s\n' "${projects_dir:-?}"
+            printf '│  State dir  %s\n' "$state_dir"
+            printf '│  Status     %s\n' "$status"
+            printf '╰─\n\n'
+            printf '╭─ Flags (from env file)\n'
+            printf '│  [%s] Headroom         token compression\n' \
+                "$([ "$hr" = 1 ] && echo '✓' || echo ' ')"
+            printf '│  [%s] Vertex AI        paid GCP project\n' \
+                "$([ "$vx" = 1 ] && echo '✓' || echo ' ')"
+            printf '│  [%s] FISS-MCP writes  agent can mutate Terra state\n' \
+                "$([ "$fw" = 1 ] && echo '✓' || echo ' ')"
+            printf '╰─\n\n'
+            printf '╭─ Last session\n'
+            if [ -n "$latest" ]; then
+                printf '│  Name     %s\n' "${sname:-(unnamed)}"
+                printf '│  UUID     %s\n' "${uuid:0:8}"
+                printf '│  Updated  %s\n' "$age"
+                [ -n "$desc" ] && printf '│  Summary  %s\n' "$desc"
+            else
+                printf '│  (no sessions yet)\n'
+            fi
+            printf '╰─\n'
+        } > "$PREVIEW_CACHE_DIR/$area.txt"
     done
 }
-
-# --- area preview ------------------------------------------------------------
-#
-# Side panel shown for the highlighted row. Box-drawn sections for sandbox
-# identity, flags, and last session. Re-sources sandbox_lib because fzf invokes
-# this in a fresh child shell.
-preview_area() {
-    local area=$1
-    local envfile="$SCRIPT_DIR/env.${area}.sh"
-    local state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
-
-    local flags projects_dir hr fw vx
-    flags=$(sb_read_env_flags "$envfile")
-    IFS='|' read -r projects_dir hr fw vx <<<"$flags"
-
-    local cid status
-    cid=$(sb_running_cid "$area")
-    if [ -n "$cid" ]; then
-        status="RUNNING (container ${cid:0:12})"
-    else
-        status="not running"
-    fi
-
-    printf '╭─ Sandbox %s\n' "$area"
-    printf '│  Env file   env.%s.sh\n' "$area"
-    printf '│  Workdir    %s\n' "${projects_dir:-?}"
-    printf '│  State dir  %s\n' "$state_dir"
-    printf '│  Status     %s\n' "$status"
-    printf '╰─\n\n'
-
-    printf '╭─ Flags (from env file)\n'
-    printf '│  [%s] Headroom         token compression\n' \
-        "$([ "$hr" = 1 ] && echo '✓' || echo ' ')"
-    printf '│  [%s] Vertex AI        paid GCP project\n' \
-        "$([ "$vx" = 1 ] && echo '✓' || echo ' ')"
-    printf '│  [%s] FISS-MCP writes  agent can mutate Terra state\n' \
-        "$([ "$fw" = 1 ] && echo '✓' || echo ' ')"
-    printf '╰─\n\n'
-
-    local latest
-    latest=$(sb_latest_session_file "$state_dir/.claude/projects")
-    printf '╭─ Last session\n'
-    if [ -n "$latest" ]; then
-        local mt age uuid sname desc
-        mt=$(sb_mtime_of "$latest")
-        age=$(sb_fmt_age $(($(date +%s) - mt)))
-        uuid=$(basename "$latest" .jsonl)
-        sname=$(sb_session_name "$latest")
-        desc=$(sb_session_description "$latest" || true)
-        printf '│  Name     %s\n' "${sname:-(unnamed)}"
-        printf '│  UUID     %s\n' "${uuid:0:8}"
-        printf '│  Updated  %s\n' "$age"
-        [ -n "$desc" ] && printf '│  Summary  %s\n' "$desc"
-    else
-        printf '│  (no sessions yet)\n'
-    fi
-    printf '╰─\n'
-}
-# preview_area runs in the parent shell now (called by build_area_rows to
-# populate the on-disk cache). The fzf preview process only needs `cat`, so
-# we no longer export helpers/SCRIPT_DIR into the fzf child environment.
 
 # --- step 1: area picker -----------------------------------------------------
 #
@@ -477,8 +476,7 @@ pick_session() {
         while IFS=$'\t' read -r mt f; do
             uuid=$(basename "$f" .jsonl)
             age=$(sb_fmt_age $((now - mt)))
-            name=$(sb_session_name "$f")
-            desc=$(sb_session_description "$f" || true)
+            IFS=$'\t' read -r name desc <<<"$(sb_session_meta "$f")"
             [ -z "$desc" ] && desc='(no summary)'
             [ -z "$name" ] && name='(unnamed)'
             SESSION_ROWS+=("$(session_row "$name" "$uuid" "$age" "$desc")")
