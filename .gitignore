@@ -12,6 +12,8 @@ claude-sandbox-shared/.claude/*
 !claude-sandbox-shared/.claude/hooks/
 !claude-sandbox-shared/.claude/hooks/**
 !claude-sandbox-shared/.claude/CLAUDE.md
+!claude-sandbox-shared/.claude/skills/
+!claude-sandbox-shared/.claude/skills/**
 
 
 workspace/*
