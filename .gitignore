@@ -12,6 +12,9 @@ claude-sandbox-shared/.claude/*
 !claude-sandbox-shared/.claude/hooks/
 !claude-sandbox-shared/.claude/hooks/**
 !claude-sandbox-shared/.claude/CLAUDE.md
+!claude-sandbox-shared/.claude/settings.json
+!claude-sandbox-shared/.claude/.caveman-active
+!claude-sandbox-shared/.claude/PLUGIN_PINS.md
 !claude-sandbox-shared/.claude/skills/
 !claude-sandbox-shared/.claude/skills/**
 

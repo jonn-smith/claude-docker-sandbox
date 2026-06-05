@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/claude_docker_sandbox_logo.png" alt="Kmera Logo" width="600">
+</p>
+
 # Claude Code Sandbox _FOR LINUX_
 
 A Docker-based sandbox for running the [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) CLI with local filesystem isolation. The container sees only a designated workspace directory and its own persistent state — the host's home directory, `/etc`, and everything else on the host remain invisible to the agent.
@@ -11,6 +15,9 @@ Beyond the normal setup and build features, this sandbox has:
 - Automated email notifications for prompts that take longer than <CONFIGURABLE> seconds to complete (default 120)
 - A built-in, pre-configured [headroom](https://github.com/chopratejas/headroom) installation (runtime-disable-able)
 - A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra. The server runs on the **host**, not inside the container, so the sandbox has no `gcloud` / `gsutil` / `google-cloud-*` libs and no `~/.config/gcloud` mount — the only path from inside the sandbox to Terra/GCP is the MCP tools the server exposes. Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
+- A built-in [CodeGraph](https://github.com/colbymchenry/codegraph) MCP server (stdio, in-container) that gives the agent a pre-indexed tree-sitter code graph — `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, etc. — instead of grep+Read chains. Maintainer benchmarks claim ~58% fewer tool calls and ~16% cheaper turns (directional, single-author). Index is auto-built on first session per workdir via a SessionStart hook and kept current by an in-process file watcher. Disable per-launch with `CODEGRAPH=0`.
+- The [caveman](https://github.com/JuliusBrussee/caveman) compression plugin enabled by default at intensity `full` (tracked via `.caveman-active`). Override per session with `/caveman lite|full|ultra` or `stop caveman`.
+- An interactive launcher (`start_sandbox.sh`) that lets you pick instance, resume an existing Claude session, and choose a workdir from an fzf menu, instead of hand-sourcing `env.<INSTANCE>.sh` and running `run_claude_docker.sh` directly.
 
 I've tried to include everything I need for my typical work.
 
@@ -19,28 +26,28 @@ This is still Linux only.  Mac build might be coming soon.
 ## Quick start (fresh clone)
 
 ```bash
-# 1. Install host prerequisites (sysbox runtime, postfix mynetworks)
+# 1. Install host prerequisites (sysbox runtime, postfix mynetworks,
+#    fiss-mcp host venv).
 ./setup_host.sh
 
-# 2. Authenticate Claude Code on the host once. Creates
-#    ~/.claude/.credentials.json which the sandbox bind-mounts in.
-claude   # then /login
-
-# 3. Build the image
+# 2. Build the image
 # NOTE: This step takes ~2200s or 36 minutes.
 cd docker && make && cd ..
 
-# 4. Launch the default "main" shared-mode instance.
+# 3. Launch the default "main" shared-mode instance.
 #    env.example.sh defaults to in-repo workspace/ + context_reference/.
 source env.example.sh
 ./run_claude_docker.sh
 ```
 
-### At first run, after initial setup, make sure to:
+First launch in any sandbox prompts `/login` inside the container. The resulting OAuth token persists into that sandbox's state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `claude-sandbox-persistent-state-<INSTANCE>/.claude/.credentials.json` in per-instance mode), so subsequent launches of the same sandbox skip the login. No host-side Claude Code install is required, and credentials are not shared with the host's `~/.claude/`.
 
-1. Install the [caveman](https://github.com/JuliusBrussee/caveman) plugin to save precious tokens:
-```
-claude plugin marketplace add JuliusBrussee/caveman && claude plugin install caveman@caveman
+### Interactive launcher (alternative to step 4)
+
+`start_sandbox.sh` opens an fzf menu: pick instance, optionally resume an existing Claude session, pick a workdir, launch. It seeds workdir candidates from any `env.*.sh` plus every workdir you've previously picked (master registry at `workdirs.txt`). Sessions are annotated with their host workdir in the picker so you can tell two `main` sessions apart by what they were operating on.
+
+```bash
+./start_sandbox.sh
 ```
 
 ### Multi-instance mode
@@ -65,6 +72,7 @@ Base: `node:22-slim`.
 - **Python 3** — venv at `/opt/claude-venv` (on `PATH`, writable by the sandbox user), preloaded with: `numpy`, `pandas`, `matplotlib`, `scipy`, `scikit-learn`, `seaborn`, `ipython`, `jupyter`, `requests`, `headroom-ai[proxy]`.
 - **Rust** — stable toolchain (`rustc`, `cargo`, `rustup`) at `/usr/local/{cargo,rustup}`.
 - **Java 17** — Eclipse Temurin JDK at `/opt/java/openjdk`, `JAVA_HOME` exported.
+- **CodeGraph** — `codegraph` binary (self-contained bundle, vendored Node runtime) at `/usr/local/bin/codegraph` → `/opt/codegraph/current/bin/codegraph`. Version pinned via `CODEGRAPH_VERSION` in `docker/Dockerfile`; bump + `make rebuild` to refresh.
 - **Dev tooling** — `git`, `curl`, `ripgrep`, `vim`, `build-essential`.
 - **Passwordless `sudo`** for the container's `claude` user. UID/GID are remapped at container start to match the host invoker (`HOST_UID` / `HOST_GID` env vars supplied by `run_claude_docker.sh`), so a single image is shareable across hosts with different user IDs — no rebuild needed.
 
@@ -74,18 +82,40 @@ Approximate image size: ~3 GB.
 
 - Docker 28.x. Docker 29.x is **not** compatible with sysbox-runc —
   containers fail with `namespace {"time" ""} does not exist`
-  ([sysbox#1011](https://github.com/nestybox/sysbox/issues/1011)).
-  `setup_host.sh` pins docker-ce to the newest 28.x and holds it.
-- A working Claude Code install on the host with OAuth credentials at `~/.claude/.credentials.json`. Obtain by running `claude` on the host once and completing `/login`.
+  ([sysbox#1011](https://github.com/nestybox/sysbox/issues/1011),
+  open as of 2026-06, no upstream fix). `setup_host.sh` pins docker-ce
+  to the newest 5:28.* in the Docker apt repo and holds it.
+- **Supported host OS** — `setup_host.sh` requires Docker's apt repo
+  to ship a 28.x build for the host's release suite. Verified per Ubuntu LTS:
+
+  | Ubuntu release | suite | docker-ce 28.x in repo? | Notes |
+  |---|---|---|---|
+  | 22.04 LTS | jammy | yes | works |
+  | 24.04 LTS | noble | yes | works, sysbox-supported |
+  | 24.10 | oracular | yes | works |
+  | 25.04 | plucky | yes | works |
+  | 25.10 | questing | yes | works |
+  | **26.04 LTS** | **resolute** | **no** | **not supported** — Docker ships 29.x only AND sysbox-ce's distro-compat list does not include 26.04. `setup_host.sh` will exit with the "no docker-ce 28.x" error. Use a 24.04 LTS or 22.04 LTS host for now, or pull the 28.x `.deb` from the `noble` pool by hand (unsupported workaround). |
+
+  Debian 10/11, Fedora 34-37, Rocky 8, Alma 8/9, CentOS Stream, Amazon
+  Linux 2/2023 are sysbox-supported per upstream — `setup_host.sh` itself
+  only knows the Debian/Ubuntu apt path, so other distros need an adapted
+  setup script.
+
+- No host-side Claude Code install required. Each sandbox prompts `/login` on its own first launch and stores the resulting OAuth token inside its own state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `claude-sandbox-persistent-state-<INSTANCE>/.claude/.credentials.json` in per-instance mode). The host's `~/.claude/` is NOT mounted into the container.
 
 ## Build
 
 ```bash
 cd docker
-make
+make             # cache-friendly build — use 99% of the time
+make rebuild     # forced: --no-cache + --pull base image
+make clean       # drop the local tags so the next `build` starts clean
 ```
 
 Tags the image as `claude-sandbox:0.0.1` and `claude-sandbox:latest`. First build pulls the Temurin JDK image, the Rust toolchain, and a few hundred MB of Python wheels — expect several minutes.
+
+Use `make rebuild` when you need a newer Claude Code from npm (the `RUN npm install -g @anthropic-ai/claude-code` layer is unpinned, so cache-friendly builds will not re-fetch it), when bumping `CODEGRAPH_VERSION` in the Dockerfile, when base-image security updates need to land, or when the cache feels stale.
 
 ## Run
 
@@ -117,6 +147,23 @@ How it works: when `HEADROOM=1`, `start_script.sh` launches `headroom proxy` on 
 Trust model: the proxy reads every byte of every request — that's how compression works. It runs entirely inside the same container as `claude`, so it sees the same OAuth token Claude already has and no wider trust boundary is opened. Code is Apache-2.0; pin the version in `Dockerfile`. If you don't want a third-party dep in the request path, leave `HEADROOM` unset and traffic goes direct.
 
 Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh` to make it sticky for that sandbox.
+
+## CodeGraph MCP (in-container, stdio)
+
+The image bakes the [CodeGraph](https://github.com/colbymchenry/codegraph) bundle into `/opt/codegraph` and symlinks `codegraph` onto `PATH`. Pinned via `ENV CODEGRAPH_VERSION=v0.9.9` in `docker/Dockerfile` — bump that line and `make rebuild` to land a newer release. The bundle ships its own Node runtime, so there is no Node/npm dependency at runtime.
+
+On every container boot, `start_script.sh` registers `mcpServers.codegraph` in `~/.claude.json` (same idempotent jq pattern as fiss-mcp). Claude Code then spawns `codegraph serve --mcp` as a stdio subprocess per session; the subprocess dies with `claude`, so there is no orphan daemon. A file watcher inside the MCP server (inotify, 2 s debounce) keeps the SQLite index live as files change.
+
+Auto-index per workdir: the SessionStart hook `claude-sandbox-shared/.claude/hooks/codegraph-init.sh` detached-spawns `codegraph init -i` when `/workspace` is a git repo **and** `/workspace/.codegraph/codegraph.db` is missing. Indexing runs in the background; the prompt does not block on it. MCP queries during the initial index return partial results. Subsequent sessions in the same workdir reuse the existing index, and the live watcher handles incremental updates. Skip indexing for a specific workdir by `touch /workspace/.codegraph-disable`.
+
+```bash
+./run_claude_docker.sh             # codegraph on (default)
+CODEGRAPH=0 ./run_claude_docker.sh # disable MCP registration this launch
+```
+
+The agent gets MCP tools `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, `codegraph_explore`, `codegraph_node`, `codegraph_files`, and `codegraph_status` — designed to replace grep+Read chains for symbol lookup and call-tree navigation. The index lives in `/workspace/.codegraph/` so it persists across container restarts via the workdir bind mount. Add `.codegraph/` to your per-repo `.gitignore` so the SQLite file does not land in commits.
+
+Resource cost: ~50 MB image bundle; idle MCP server ~80-150 MB RSS while a session is open; ~1-10 MB SQLite DB per 100k LOC; CPU spike only on file change. Initial index of a fresh medium-sized repo is seconds to a couple of minutes.
 
 ## fiss-mcp (Terra MCP server) — runs on the host
 
@@ -226,17 +273,20 @@ Per-instance default: add `source SET_VERTEX_MODE.sh` at the top of `env.<INSTAN
 
 Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 
-- **Per-instance (default, `=0` or unset)** — full Claude state lives in `$SANDBOX_HOME/.claude` for this one instance. Original behavior; instances are fully independent. No shared dir touched.
-- **Shared (`=1`)** — settings/skills/plugins/hooks/projects/plans/tasks/sessions come from `$SHARED_HOME` (one copy across all shared-mode instances). `.claude.json` plus write-hot dirs (cache, file-history, backups, shell-snapshots, session-env, history.jsonl) stay in `$SANDBOX_HOME` and bind-mount on top of the shared `.claude`. `.claude.json` is per-instance because it's rewritten whole on every change and holds per-project allowedTools/mcpServers/history that would race if shared.
+- **Per-instance (`=0` or unset)** — full Claude state lives in `$SANDBOX_HOME/.claude` for this one instance. Instances are fully independent. No shared dir touched.
+- **Shared (`=1`)** — settings/skills/plugins/hooks/plans/tasks/sessions come from `$SHARED_HOME` (one copy across all shared-mode instances). `.claude.json` plus write-hot dirs (cache, file-history, backups, shell-snapshots, session-env, projects, history.jsonl) stay in `$SANDBOX_HOME` and bind-mount on top of the shared `.claude`. `.claude.json` and `projects/` are per-instance because they're rewritten on every change and hold per-project allowedTools/mcpServers/history/transcripts that would race if shared.
+
+The example envs (`env.example.sh`, `env.B.sh`, `env.WHB.sh`, `env.GATK.sh`, `env.main.sh`) all set `CLAUDE_SANDBOX_USE_SHARED=1` — shared is the de-facto default on this checkout. The code-level fallback (when neither set nor sourced) is per-instance.
 
 ### Per-instance mode (default)
 
 | Host path | Container path | Purpose |
 |---|---|---|
 | `$PROJECTS_DIR` | `/workspace` | Read/write workspace. CWD on launch. |
-| `$SANDBOX_HOME/.claude/` | `/home/claude/.claude` | All Claude state (settings, memory, sessions, plugins, caches). |
+| `$SANDBOX_HOME/.claude/` | `/home/claude/.claude` | All Claude state (settings, memory, sessions, plugins, caches, **OAuth token**). |
 | `$SANDBOX_HOME/.claude.json` | `/home/claude/.claude.json` | Onboarding state, project history. |
-| `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | OAuth token (RW; refreshes land on host). |
+
+The host's `~/.claude/` is NOT mounted. The OAuth token from `/login` lands at `$SANDBOX_HOME/.claude/.credentials.json` (inside the directory mount above) and stays scoped to this sandbox.
 
 (fiss-mcp / Terra creds are **not** mounted — the MCP server runs on the host. See [fiss-mcp section](#fiss-mcp-terra-mcp-server--runs-on-the-host).)
 
@@ -252,8 +302,10 @@ Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 | `$SANDBOX_HOME/.claude/backups` | `/home/claude/.claude/backups` | per-instance |
 | `$SANDBOX_HOME/.claude/shell-snapshots` | `/home/claude/.claude/shell-snapshots` | per-instance |
 | `$SANDBOX_HOME/.claude/session-env` | `/home/claude/.claude/session-env` | per-instance |
+| `$SANDBOX_HOME/.claude/projects` | `/home/claude/.claude/projects` | per-instance — Claude session transcripts (one jsonl per session, plus `.workdir` sidecar files written by `start_sandbox.sh` so the picker can show which host workdir each session ran against) |
 | `$SANDBOX_HOME/.claude/history.jsonl` | `/home/claude/.claude/history.jsonl` | per-instance |
-| `~/.claude/.credentials.json` | `/home/claude/.claude/.credentials.json` | host-shared |
+
+The OAuth token from `/login` lands inside the shared `.claude/` (at `$SHARED_HOME/.claude/.credentials.json`) and is therefore shared across every shared-mode sandbox on this host — log in once, every shared-mode instance reuses the token. The host's `~/.claude/` is NOT mounted.
 
 `$SHARED_HOME` defaults to `claude-sandbox-shared/` next to `run_claude_docker.sh` (override: `CLAUDE_SANDBOX_SHARED`). `$SANDBOX_HOME` defaults to `claude-sandbox-persistent-state-${CLAUDE_SANDBOX_INSTANCE}/` (override: `CLAUDE_SANDBOX_HOME`). Both must be absolute paths.
 
@@ -261,7 +313,7 @@ Nothing else on the host is visible to the container.
 
 ### Adopting shared mode safely (no risk to existing instances)
 
-Existing `main` / `B` / etc. keep working in per-instance mode untouched. Opt a sandbox into shared mode by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to its `env.<INSTANCE>.sh`. First launch populates `claude-sandbox-shared/` from the seeded defaults; subsequent launches reuse it. Switch back any time by removing that line.
+Opt a sandbox into shared mode by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to its `env.<INSTANCE>.sh` (the bundled `env.*.sh` files already do this). First launch on a fresh clone uses the tracked `claude-sandbox-shared/.claude/` (CLAUDE.md, settings.json, hooks, skills, caveman defaults) directly; subsequent launches reuse it. Switch back to per-instance any time by removing that line — `run_claude_docker.sh` will seed a copy of the tracked settings + hooks into the per-instance dir on first launch (`seed_settings` / `seed_hooks`).
 
 ### Concurrency caveats (shared mode)
 
@@ -299,7 +351,7 @@ Paths are driven by environment variables — nothing is hardcoded in `run_claud
 - `CLAUDE_SANDBOX_HOME` — override the per-instance state dir (default: `claude-sandbox-persistent-state-<INSTANCE>/` alongside the launcher).
 - `CLAUDE_SANDBOX_SHARED` — override the shared dir in shared mode (default: `claude-sandbox-shared/`).
 
-Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, `CLAUDE_SANDBOX_USE_SHARED`, and the Vertex-mode launcher signals (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `VERTEX_PROXY_PORT`) — set whichever you want sticky for that sandbox.
+Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, `CODEGRAPH` (set `=0` to skip CodeGraph MCP registration in that sandbox), `CLAUDE_SANDBOX_USE_SHARED`, and the Vertex-mode launcher signals (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `VERTEX_PROXY_PORT`) — set whichever you want sticky for that sandbox.
 
 ## License
 

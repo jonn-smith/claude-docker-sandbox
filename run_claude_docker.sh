@@ -4,22 +4,28 @@ set -euo pipefail
 # Here we set our directories and credentials so we can authenticate and have
 # a proper sandbox.  It's VERY important that we don't let these agents run
 # freely around our machine.
-if [[ -z "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]] || [[ ! -d "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]]; then
+# `:-` default — under `set -u`, a bare ${VAR} on an unset var errors with
+# "unbound variable" before our friendly message ever runs. ${VAR:-} expands
+# to empty so the -z test fires the helpful branch instead.
+if [[ -z "${CLAUDE_SANDBOX_PROJECTS_DIR:-}" ]] || [[ ! -d "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]]; then
     echo "CRITICAL ERROR: CLAUDE_SANDBOX_PROJECTS_DIR is not set, is empty, or does not exist." >&2
     echo "                You must set this env var before starting the docker image." >&2
+    echo "                Try: source env.example.sh   (or your env.<INSTANCE>.sh)" >&2
     exit 1
 fi
 
-if [[ -z "${CLAUDE_SANDBOX_CONTEXT_DIR}" ]] || [[ ! -d "${CLAUDE_SANDBOX_CONTEXT_DIR}" ]]; then
+if [[ -z "${CLAUDE_SANDBOX_CONTEXT_DIR:-}" ]] || [[ ! -d "${CLAUDE_SANDBOX_CONTEXT_DIR}" ]]; then
     echo "CRITICAL ERROR: CLAUDE_SANDBOX_CONTEXT_DIR is not set, is empty, or does not exist." >&2
     echo "                You must set this env var before starting the docker image." >&2
+    echo "                Try: source env.example.sh   (or your env.<INSTANCE>.sh)" >&2
     exit 1
 fi
 
-if [[ -z "$CLAUDE_SANDBOX_INSTANCE" ]]; then
+if [[ -z "${CLAUDE_SANDBOX_INSTANCE:-}" ]]; then
     echo "CRITICAL ERROR: CLAUDE_SANDBOX_INSTANCE is not set, does not exist, or is empty." >&2
     echo "                Each sandbox needs a unique instance ID so concurrent" >&2
     echo "                inner dockerds don't share /var/lib/docker." >&2
+    echo "                Try: source env.example.sh   (or your env.<INSTANCE>.sh)" >&2
     exit 1
 fi
 
@@ -74,11 +80,12 @@ if [[ "$USE_SHARED" == "1" && "$SHARED_HOME" != /* ]]; then
     exit 1
 fi
 
-# Default hooks committed in the repo so a fresh clone has working hooks.
-# Source: claude-sandbox-shared/.claude/hooks/. Shared-mode launches use
-# them in place; per-instance launches get a copy on first launch via
-# seed_hooks.
+# Defaults committed in the repo so a fresh clone has working hooks +
+# settings on first launch. Source: claude-sandbox-shared/.claude/. Shared
+# mode (USE_SHARED=1) bind-mounts the whole tracked dir; per-instance mode
+# (USE_SHARED=0) copies these as seed on first launch only.
 DEFAULT_HOOKS_DIR="${SCRIPT_DIR}/claude-sandbox-shared/.claude/hooks"
+DEFAULT_SETTINGS_FILE="${SCRIPT_DIR}/claude-sandbox-shared/.claude/settings.json"
 
 # Seed hooks dir from DEFAULT_HOOKS_DIR if target doesn't exist yet. First
 # launch of a new instance gets the committed defaults; subsequent launches
@@ -91,56 +98,27 @@ seed_hooks() {
   fi
 }
 
-# Default settings.json content for first-ever launch of an empty state dir.
-write_default_settings() {
+# Seed settings.json from the tracked default if target doesn't exist yet.
+# Same semantics as seed_hooks — first-launch only, never overwrites user
+# customization. Source is the in-repo tracked file, not SHARED_HOME (which
+# the user may have remapped to a custom location).
+seed_settings() {
   local target="$1"
-  cat > "$target" <<'JSON'
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/record-task-start.sh"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/notify-if-long.sh"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/notify-if-long.sh"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/notify-if-rate-limited.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-JSON
+  if [[ ! -f "$target" && -f "$DEFAULT_SETTINGS_FILE" ]]; then
+    mkdir -p "$(dirname "$target")"
+    cp -a "$DEFAULT_SETTINGS_FILE" "$target"
+  fi
 }
 
 if [[ "$USE_SHARED" == "1" ]]; then
     # --- shared layout ---------------------------------------------------
+    # SHARED_HOME defaults to the tracked claude-sandbox-shared/ in the repo,
+    # so settings.json + hooks/ are already present from the clone. No
+    # seeding needed unless the user remapped CLAUDE_SANDBOX_SHARED to an
+    # empty dir; seed_hooks/seed_settings handle that as a courtesy.
     mkdir -p "$SHARED_HOME/.claude"
     seed_hooks "$SHARED_HOME/.claude/hooks"
-    [ -f "$SHARED_HOME/.claude/settings.json" ] || write_default_settings "$SHARED_HOME/.claude/settings.json"
+    seed_settings "$SHARED_HOME/.claude/settings.json"
 
     # Per-instance hot-state dirs. Bind-mount sources must exist before
     # `docker run` or Docker creates them as the wrong type (dir vs file).
@@ -161,10 +139,62 @@ else
     # --- original per-instance layout ------------------------------------
     mkdir -p "$SANDBOX_HOME/.claude"
     seed_hooks "$SANDBOX_HOME/.claude/hooks"
+    seed_settings "$SANDBOX_HOME/.claude/settings.json"
     [ -s "$SANDBOX_HOME/.claude.json" ] || echo '{}' > "$SANDBOX_HOME/.claude.json"
-    [ -f "$SANDBOX_HOME/.claude/settings.json" ] || write_default_settings "$SANDBOX_HOME/.claude/settings.json"
     echo "layout: per-instance (SANDBOX_HOME=${SANDBOX_HOME})"
 fi
+
+# Defensive sanity check: any of these paths existing as a DIRECTORY is a
+# silent killer. They're supposed to be regular files. The trap appears
+# when an earlier `docker run -v <host_file>:<container_file>` ran without
+# the host file existing — Docker creates the container destination as a
+# directory by default, and that directory then persists inside whatever
+# parent directory bind mount it landed in (e.g. the shared .claude/).
+# Once present, claude code can't write `.credentials.json` because a
+# directory with that name is in the way; /login appears to succeed in
+# memory but the on-disk write fails. Same shape for `.claude.json`.
+#
+# Catch it here and shriek rather than letting the user debug another
+# silent /login round trip. NEVER auto-rm — rm-on-someone-else's-state-
+# dir is a footgun, and a real directory at these paths only happens via
+# this bug, so the safe thing is to halt and ask.
+#
+# Prevention going forward: we don't bind-mount any single host file
+# whose existence isn't pre-guaranteed by this script. The host
+# credentials file mount that originally created this trap was removed
+# in c7b0cab. This check is defense-in-depth against leftover state from
+# the old code path and against any future regression.
+check_not_directory() {
+    local path="$1"
+    if [ -d "$path" ]; then
+        local RED=$'\033[1;31m' YEL=$'\033[1;33m' RST=$'\033[0m'
+        echo
+        echo "${RED}===== LAUNCH ABORTED: directory where a file should be =====${RST}"
+        echo "${YEL}Path:    $path${RST}"
+        echo "${YEL}Found:   directory${RST}"
+        echo "${YEL}Wanted:  regular file (or absent)${RST}"
+        echo
+        echo "${YEL}This is leftover state from an older sandbox launcher that bind-${RST}"
+        echo "${YEL}mounted a host file source that did not exist. Docker auto-created${RST}"
+        echo "${YEL}the destination as a directory and that directory persisted inside${RST}"
+        echo "${YEL}one of the directory bind mounts. claude code cannot write the file${RST}"
+        echo "${YEL}while a directory blocks the path, so /login fails silently.${RST}"
+        echo
+        echo "${YEL}Fix:${RST}"
+        echo "${YEL}    rm -rf '$path'${RST}"
+        echo "${YEL}Then relaunch.${RST}"
+        echo "${RED}=============================================================${RST}"
+        echo
+        exit 1
+    fi
+}
+for candidate in \
+    "$SHARED_HOME/.claude/.credentials.json" \
+    "$SHARED_HOME/.claude.json" \
+    "$SANDBOX_HOME/.claude/.credentials.json" \
+    "$SANDBOX_HOME/.claude.json" ; do
+    check_not_directory "$candidate"
+done
 
 # Refuse to launch if this instance's DinD volume is already in use — two
 # dockerds writing the same /var/lib/docker corrupt the store.
@@ -200,7 +230,13 @@ else
     )
 fi
 MOUNTS+=(
-  -v "${HOME}/.claude/.credentials.json:/home/claude/.claude/.credentials.json"
+  # No host credentials file bind-mounted. Each sandbox does its own
+  # /login on first launch and stores the resulting token inside its
+  # state dir's .claude/ (shared dir in USE_SHARED=1, per-instance dir
+  # otherwise) — both of which are directory bind mounts where claude
+  # code's atomic rename(2) works fine. Earlier attempts to bind the
+  # host's ~/.claude/.credentials.json directly broke rename and
+  # silently dropped post-/login tokens.
   -v "${CLAUDE_SANDBOX_CONTEXT_DIR}:/context"
   -v "${DIND_VOLUME}:/var/lib/docker"
 )
@@ -496,6 +532,7 @@ docker run --rm -it \
   -e FISS_MCP="${FISS_MCP_ENABLED}" \
   -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
   -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
+  -e CODEGRAPH="${CODEGRAPH:-1}" \
   -e ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
   -e CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" \
   -e ANTHROPIC_TARGET_API_URL="${VERTEX_PROXY_URL_FOR_CONTAINER}" \
