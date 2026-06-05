@@ -116,5 +116,75 @@ else
   echo "fiss-mcp: OFF"
 fi
 
+# CodeGraph MCP (local stdio). Binary baked into image at /usr/local/bin/codegraph.
+# Claude Code spawns `codegraph serve --mcp` per-session via the mcpServers entry
+# we drop into ~/.claude.json here. Disable by setting CODEGRAPH=0.
+if [[ "${CODEGRAPH:-1}" == "1" ]] && command -v codegraph >/dev/null 2>&1; then
+  jq '.mcpServers["codegraph"] = {
+        type: "stdio",
+        command: "codegraph",
+        args: ["serve", "--mcp"]
+      }' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && cat "${CLAUDE_JSON}.tmp" > "$CLAUDE_JSON" && rm "${CLAUDE_JSON}.tmp"
+  echo "codegraph: ON  $(codegraph --version 2>/dev/null || echo '(version unknown)')"
+else
+  jq 'if .mcpServers? then .mcpServers |= del(.["codegraph"]) else . end' \
+     "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && cat "${CLAUDE_JSON}.tmp" > "$CLAUDE_JSON" && rm "${CLAUDE_JSON}.tmp"
+  echo "codegraph: OFF"
+fi
+
+# Plugin pin drift detection. settings.json pins each marketplace to a tag,
+# but Claude Code may have an older cached marketplace whose source predates
+# the pin (or someone could have force-moved the upstream tag). Compare the
+# git HEAD of each cached marketplace against the expected SHA recorded in
+# ~/.claude/PLUGIN_PINS.md and warn loudly on mismatch.
+#
+# Bump procedure: when bumping the ref in settings.json, update PLUGIN_PINS.md
+# AND the EXPECTED_SHA value below. The values must agree.
+#
+# Non-fatal: prints a banner, does not block claude. To force re-resolve at
+# the pinned ref, wipe the cache:
+#   rm -rf ~/.claude/plugins/marketplaces/<name> \
+#          ~/.claude/plugins/cache/<name> \
+#          ~/.claude/plugins/data/<name>-<name>
+#   jq 'del(.["<name>"])' ~/.claude/plugins/known_marketplaces.json > tmp \
+#     && mv tmp ~/.claude/plugins/known_marketplaces.json
+# then restart the sandbox.
+check_pin() {
+  # Separate `local` lines — bash evaluates all RHS expressions on a
+  # single `local a=... b=$a` declaration BEFORE any LHS assignment
+  # commits, so `$name` on the right-hand side of repo_dir was unbound
+  # under `set -u` (verified on bash 5.2). Split form is safe across
+  # bash versions.
+  local name="$1"
+  local expected="$2"
+  local repo_dir="$HOME/.claude/plugins/marketplaces/$name"
+  if [[ ! -d "$repo_dir/.git" ]]; then
+    echo "pin-check ($name): marketplace not yet installed — will resolve at pinned ref on first use."
+    return 0
+  fi
+  local actual
+  actual=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -z "$actual" ]]; then
+    echo "pin-check ($name): could not read git HEAD at $repo_dir"
+    return 0
+  fi
+  if [[ "$actual" == "$expected" ]]; then
+    echo "pin-check ($name): OK at $expected"
+    return 0
+  fi
+  local RED=$'\033[1;31m' YEL=$'\033[1;33m' RST=$'\033[0m'
+  echo
+  echo "${RED}===== PIN DRIFT WARNING =====${RST}"
+  echo "${YEL}Plugin/marketplace:  $name${RST}"
+  echo "${YEL}Expected commit:     $expected${RST}"
+  echo "${YEL}Installed commit:    $actual${RST}"
+  echo "${YEL}See ~/.claude/PLUGIN_PINS.md for the bump/verify procedure.${RST}"
+  echo "${YEL}To force re-resolve, wipe the cache (see check_pin source comment).${RST}"
+  echo "${RED}=============================${RST}"
+  echo
+}
+# Keep in sync with claude-sandbox-shared/.claude/PLUGIN_PINS.md.
+check_pin caveman 63a91ecadbf4c4719a4602a5abb00883f9966034
+
 # Run claude:
 claude "$@"

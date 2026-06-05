@@ -54,7 +54,17 @@ if [[ "${RESOLVED}" != "${FISS_MCP_REF_COMMIT}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${VENV_DIR}/pyvenv.cfg" ]]; then
+# A venv is "good" only if both pyvenv.cfg AND bin/pip are present. An
+# earlier `python3 -m venv` invocation on a host missing the python3-venv
+# package writes pyvenv.cfg before bailing on ensurepip, leaving bin/pip
+# absent — a guard that only checked pyvenv.cfg silently skipped recreation
+# and the very next line (pip install) failed with "No such file or
+# directory". Wipe any partial venv so the create step is forced.
+if [[ ! -x "${VENV_DIR}/bin/pip" ]]; then
+  if [[ -e "${VENV_DIR}" ]]; then
+    echo "host_fiss_mcp: removing incomplete venv at ${VENV_DIR}"
+    rm -rf "${VENV_DIR}"
+  fi
   echo "host_fiss_mcp: creating venv at ${VENV_DIR}"
   "$PY" -m venv "${VENV_DIR}"
 fi
