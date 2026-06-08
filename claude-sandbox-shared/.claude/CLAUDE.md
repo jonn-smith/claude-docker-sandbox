@@ -52,6 +52,40 @@ If a task ends and the user is not online, do not idle. Update task
 status, commit work in progress on a branch, write a brief status note
 to a file the operator will find on return, and exit cleanly.
 
+# Background monitoring output
+
+When you stream events from a background process — Monitor tool watches,
+poll loops over CI / logs / queues, anything that emits one line per
+notification — every emitted line MUST start with a wall-clock timestamp
+in the host's local timezone, followed by a single space, then the actual
+event payload. No exceptions: a line without a timestamp is a bug.
+
+Format:
+    [HH:MM:SS TZ] <event payload>
+
+Examples:
+    [13:42:27 EDT] etime 7s, RSS 9.6 GB.
+    [02:11:04 PST] step 4/12 passed (elapsed 1m12s).
+    [09:00:01 UTC] ERROR Traceback (most recent call last): ...
+
+The TZ field is whatever `date "+%Z"` resolves to on the host (EDT, PST,
+UTC, etc.) — do not normalize to UTC unless the operator explicitly asks.
+Local time is what the operator is reading the clock in.
+
+How to apply in Monitor scripts: prefix at emit time, not in the main
+loop. Pick the form that flushes per line:
+
+    # GNU awk — flushes per record
+    your_command | awk '{print "[" strftime("%H:%M:%S %Z") "] " $0; fflush()}'
+
+    # POSIX shell — reliable but slower
+    your_command | while IFS= read -r line; do
+        printf '[%s] %s\n' "$(date '+%H:%M:%S %Z')" "$line"
+    done
+
+Do not prefix lines INSIDE the Monitor `description` field — that's for
+the human-readable label of the watch. Prefix the actual stdout stream.
+
 # Audit log
 
 Maintain a persistent, append-only research journal as you work. The
