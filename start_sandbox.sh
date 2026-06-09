@@ -252,14 +252,37 @@ area_header_labels(){ area_row "AREA" "WORKDIR" "FLAGS" "LAST"; }
 # or re-read the clock for every area.
 build_one_area() {
     local area=$1 running_set=$2 now=$3
-    local envfile state_dir flags projects_dir hr fw vx badge
+    local envfile state_dir flags projects_dir hr fw vx ro_mounts badge
     local latest mt age sname desc uuid area_label status
 
     envfile="$SCRIPT_DIR/env.${area}.sh"
     state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
     flags=$(sb_read_env_flags "$envfile")
-    IFS='|' read -r projects_dir hr fw vx <<<"$flags"
+    IFS='|' read -r projects_dir hr fw vx ro_mounts <<<"$flags"
     badge=$(flag_badge "$hr" "$vx" "$fw")
+
+    # Summarize RO mounts for the preview pane: count + up to 3 basenames.
+    # We don't replay the launcher's collision-renaming here — that runs
+    # at launch and the operator can scroll the launch log for the final
+    # `/read-only-reference/<name>` lines if they need exact names.
+    local ro_count=0 ro_summary='(none)'
+    if [ -n "$ro_mounts" ]; then
+        local -a _ro_arr
+        # shellcheck disable=SC2206
+        _ro_arr=($ro_mounts)
+        ro_count=${#_ro_arr[@]}
+        local _sample='' _i
+        for (( _i = 0; _i < ro_count && _i < 3; _i++ )); do
+            local _bn
+            _bn=$(basename "${_ro_arr[_i]}")
+            if [ -z "$_sample" ]; then _sample=$_bn; else _sample="$_sample, $_bn"; fi
+        done
+        if (( ro_count > 3 )); then
+            ro_summary="${ro_count} dirs: ${_sample}, …"
+        else
+            ro_summary="${ro_count} dirs: ${_sample}"
+        fi
+    fi
 
     latest=$(sb_latest_session_file "$state_dir/.claude/projects")
     sname=""; desc=""; uuid=""; age='(none)'; desc_full=""
@@ -294,6 +317,7 @@ build_one_area() {
             "$([ "$vx" = 1 ] && echo '✓' || echo ' ')"
         printf '│  [%s] FISS-MCP writes  agent can mutate Terra state\n' \
             "$([ "$fw" = 1 ] && echo '✓' || echo ' ')"
+        printf '│  RO mounts          %s\n' "$ro_summary"
         printf '╰─\n\n'
         # Box-less so fzf --preview-window=wrap wraps long lines cleanly.
         printf 'Last session summary\n\n'
@@ -663,7 +687,9 @@ pick_session() {
     # don't end in a launch (user ESC-ed out) therefore evaporate.
     local flags _pd
     flags=$(sb_read_env_flags "$ENV_FILE")
-    IFS='|' read -r _pd INITIAL_HR INITIAL_FW INITIAL_VX <<<"$flags"
+    # Fifth field (RO mounts) ignored here — toggle screen doesn't expose
+    # it. read into a sink var so it doesn't leak into INITIAL_VX.
+    IFS='|' read -r _pd INITIAL_HR INITIAL_FW INITIAL_VX _ro_mounts <<<"$flags"
     HR=$INITIAL_HR; VX=$INITIAL_VX; FW=$INITIAL_FW
     printf '%d %d %d\n' "$HR" "$VX" "$FW" > "$toggle_file"
 

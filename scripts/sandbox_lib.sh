@@ -164,21 +164,24 @@ PY
 }
 
 # Read env.<INSTANCE>.sh flag state without leaking vars into caller.
-# Prints four pipe-separated fields:
-#   <projects_dir>|<headroom>|<fiss_writes>|<vertex>
+# Prints five pipe-separated fields:
+#   <projects_dir>|<headroom>|<fiss_writes>|<vertex>|<ro_mounts>
 # Each flag is "1" if enabled, "0" if not. projects_dir is the resolved value.
+# ro_mounts is the raw CLAUDE_SANDBOX_RO_MOUNTS value (space-separated host
+# paths, may be empty). Paths can't contain '|' so the field stays delimited.
 sb_read_env_flags() {
     local envfile=$1
-    [ -r "$envfile" ] || { echo "||0|0"; return 1; }
+    [ -r "$envfile" ] || { echo "||0|0|"; return 1; }
     bash -c "
         set +u
         # shellcheck disable=SC1090
         source '$envfile' >/dev/null 2>&1 || true
-        printf '%s|%s|%s|%s\n' \
+        printf '%s|%s|%s|%s|%s\n' \
             \"\${CLAUDE_SANDBOX_PROJECTS_DIR:-}\" \
             \"\$([ \"\${HEADROOM:-0}\" = \"1\" ] && echo 1 || echo 0)\" \
             \"\$([ \"\${FISS_MCP_ALLOW_WRITES:-0}\" = \"1\" ] && echo 1 || echo 0)\" \
-            \"\$([ \"\${CLAUDE_CODE_USE_VERTEX:-0}\" = \"1\" ] && echo 1 || echo 0)\"
+            \"\$([ \"\${CLAUDE_CODE_USE_VERTEX:-0}\" = \"1\" ] && echo 1 || echo 0)\" \
+            \"\${CLAUDE_SANDBOX_RO_MOUNTS:-}\"
     "
 }
 

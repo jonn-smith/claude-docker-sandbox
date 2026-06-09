@@ -323,6 +323,32 @@ Hot dirs are per-instance — no race. Shared items are write-rare in practice, 
 - **Plugin install/upgrade**: if you install a plugin in one instance while another reads `installed_plugins.json`, restart the second to pick it up cleanly.
 - **Memory (`projects/`)**: per-file atomic writes; rare contention.
 
+## Read-only reference mounts
+
+Optional caller-supplied read-only bind mounts for reference datasets, shared corpora, system config — anything the agent should be able to read but never mutate. Set `CLAUDE_SANDBOX_RO_MOUNTS` in your `env.<INSTANCE>.sh` to a **space-separated list of host directories** (no container path — the launcher picks one):
+
+```bash
+export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference /srv/corpus /etc/shared-config"
+```
+
+Each entry shows up at `/read-only-reference/<name>` inside the container, where `<name>` is the host basename by default. On basename collision, the launcher prepends parent-dir segments joined by underscores until every name is unique:
+
+| Host paths | Container paths |
+|---|---|
+| `/data/reference` `/srv/corpus` | `/read-only-reference/reference` `/read-only-reference/corpus` |
+| `/a/b/data` `/x/y/data` | `/read-only-reference/b_data` `/read-only-reference/y_data` |
+| `/a/x/foo` `/b/x/foo` `/c/x/foo` | `/read-only-reference/a_x_foo` `/read-only-reference/b_x_foo` `/read-only-reference/c_x_foo` |
+
+Each accepted mount prints `ro-mount: <host> -> /read-only-reference/<name>` at launch.
+
+**Validation** (CRITICAL ERROR on failure):
+- Absolute paths only.
+- Host path must already exist on disk — refuses to launch otherwise so Docker doesn't auto-create the source as a directory (same trap the `check_not_directory` guard protects against on the credentials side).
+
+**Enforcement**: the `:ro` flag sets `MS_RDONLY` on the mount in the container's mount namespace. Every write attempt (`open(O_WRONLY)`, `unlink`, `rename` into the tree) returns `EROFS` at the syscall layer — file permissions and `sudo` don't help because the restriction is at the mount, not the inode. The sandbox does not run `--privileged` and does not grant `CAP_SYS_ADMIN`, so a `mount -o remount,rw` from inside also fails with `EPERM`. Host-side edits to the directory are visible to the container immediately (bind mount shares inodes); that's the operator's intentional channel for updating reference material.
+
+The interactive launcher (`start_sandbox.sh`) shows a one-line `RO mounts` summary in each area's preview pane — count + first three basenames.
+
 ## Persistence
 
 - **Per-instance mode** — everything in `$SANDBOX_HOME` (settings + state + sessions + caches), preserved across runs of that instance only.
