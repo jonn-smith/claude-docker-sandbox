@@ -242,35 +242,123 @@ MOUNTS+=(
 )
 
 # Optional caller-supplied read-only mounts. Space-separated list of
-# host:container pairs in CLAUDE_SANDBOX_RO_MOUNTS — one bind mount per
-# entry, all forced read-only via the :ro suffix. Use for reference
-# datasets, shared corpora, system config the agent should read but never
-# mutate. Host path must already exist; we refuse to launch otherwise so
-# Docker doesn't auto-create the source as a directory (same trap the
-# `check_not_directory` guard above protects against).
+# host DIRECTORIES in CLAUDE_SANDBOX_RO_MOUNTS — no container path; the
+# launcher picks one. Each host dir is mounted at
+# /read-only-reference/<name>:ro inside the container, where <name>
+# defaults to the host basename. On basename collision, the launcher
+# prepends parent directory segments joined by underscores until every
+# name is unique (e.g. /a/b/data + /x/y/data → b_data and y_data).
+#
+# Use for reference datasets, shared corpora, system config the agent
+# should read but never mutate. Host path must already exist; we refuse
+# to launch otherwise so Docker doesn't auto-create it as a directory
+# (same trap the `check_not_directory` guard above protects against).
 #
 # Example env.<INSTANCE>.sh:
-#   export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference:/data/reference /etc/shared-config:/opt/config"
+#   export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference /srv/corpus /etc/shared-config"
 RO_MOUNTS_RAW="${CLAUDE_SANDBOX_RO_MOUNTS:-}"
 if [[ -n "$RO_MOUNTS_RAW" ]]; then
-    for entry in $RO_MOUNTS_RAW; do
-        host_path="${entry%%:*}"
-        cont_path="${entry#*:}"
-        if [[ "$host_path" == "$entry" || -z "$cont_path" ]]; then
-            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS entry '$entry' is not 'host:container' form." >&2
+    # Validate + canonicalize (resolve symlinks, strip trailing slashes,
+    # dedupe). After this loop, RO_PATHS holds unique canonical paths.
+    declare -a RO_PATHS=()
+    declare -A RO_SEEN=()
+    for raw in $RO_MOUNTS_RAW; do
+        if [[ "$raw" != /* ]]; then
+            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS entry '$raw' must be an absolute path." >&2
             exit 1
         fi
-        if [[ "$host_path" != /* || "$cont_path" != /* ]]; then
-            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS entry '$entry' must use absolute paths on both sides." >&2
-            exit 1
-        fi
-        if [[ ! -e "$host_path" ]]; then
-            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS host path '$host_path' does not exist on this host." >&2
+        if [[ ! -e "$raw" ]]; then
+            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS host path '$raw' does not exist on this host." >&2
             echo "                Refusing to let Docker auto-create it as a directory." >&2
             exit 1
         fi
-        MOUNTS+=( -v "${host_path}:${cont_path}:ro" )
-        echo "ro-mount: ${host_path} -> ${cont_path}"
+        # readlink -f follows symlinks, normalizes // and trailing /.
+        canon=$(readlink -f "$raw")
+        if [[ -z "${RO_SEEN[$canon]:-}" ]]; then
+            RO_SEEN[$canon]=1
+            RO_PATHS+=("$canon")
+        fi
+    done
+
+    # Pick container names with collision-driven depth bumping. Each
+    # entry's name is its last N path segments joined by underscores;
+    # N starts at 1 (basename only) and gets bumped by 1 for every
+    # path whose current name collides with another's.
+    #
+    # name_at_depth /a/b/c 1 -> "c"
+    # name_at_depth /a/b/c 2 -> "b_c"
+    # name_at_depth /a/b/c 99 -> "a_b_c"   (caps at total segment count)
+    name_at_depth() {
+        local path="$1" depth="$2"
+        IFS='/' read -ra segs <<< "$path"
+        # Drop empty leading segment from absolute path.
+        local cleaned=()
+        local s
+        for s in "${segs[@]}"; do
+            [[ -n "$s" ]] && cleaned+=("$s")
+        done
+        local n=${#cleaned[@]}
+        (( depth > n )) && depth=$n
+        local start=$(( n - depth ))
+        local out="" i
+        for (( i = start; i < n; i++ )); do
+            if [[ -z "$out" ]]; then out=${cleaned[i]}; else out="${out}_${cleaned[i]}"; fi
+        done
+        printf '%s' "$out"
+    }
+
+    declare -A RO_DEPTH=()
+    for p in "${RO_PATHS[@]}"; do
+        RO_DEPTH["$p"]=1
+    done
+
+    # Bump-on-collision loop. Capped at 32 iterations as a paranoid
+    # backstop; real-world paths shouldn't need anywhere near that.
+    for (( iter = 0; iter < 32; iter++ )); do
+        # name -> count
+        declare -A NAME_COUNT=()
+        # name -> "p1<NL>p2<NL>..."
+        declare -A NAME_PATHS=()
+        for p in "${RO_PATHS[@]}"; do
+            n=$(name_at_depth "$p" "${RO_DEPTH[$p]}")
+            NAME_COUNT[$n]=$(( ${NAME_COUNT[$n]:-0} + 1 ))
+            NAME_PATHS[$n]+="${p}"$'\n'
+        done
+        collision=0
+        for n in "${!NAME_COUNT[@]}"; do
+            (( NAME_COUNT[$n] > 1 )) || continue
+            collision=1
+            # Bump every path claiming this name, capped at the path's
+            # own segment count (a path of three segments can't go to
+            # depth 4 — leave it where it is).
+            while IFS= read -r p; do
+                [[ -z "$p" ]] && continue
+                IFS='/' read -ra segs <<< "$p"
+                total=0
+                for s in "${segs[@]}"; do [[ -n "$s" ]] && total=$(( total + 1 )); done
+                cur=${RO_DEPTH[$p]}
+                if (( cur < total )); then
+                    RO_DEPTH[$p]=$(( cur + 1 ))
+                fi
+            done <<< "${NAME_PATHS[$n]}"
+        done
+        (( collision == 0 )) && break
+    done
+
+    # Final collision check — if two siblings have identical full paths
+    # this loop converged but they still collide (impossible after dedupe,
+    # but cheap to assert).
+    declare -A FINAL_NAMES=()
+    for p in "${RO_PATHS[@]}"; do
+        n=$(name_at_depth "$p" "${RO_DEPTH[$p]}")
+        if [[ -n "${FINAL_NAMES[$n]:-}" ]]; then
+            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS — could not pick unique container names." >&2
+            echo "                Both '$p' and '${FINAL_NAMES[$n]}' resolve to '/read-only-reference/$n'." >&2
+            exit 1
+        fi
+        FINAL_NAMES[$n]=$p
+        MOUNTS+=( -v "${p}:/read-only-reference/${n}:ro" )
+        echo "ro-mount: ${p} -> /read-only-reference/${n}"
     done
 fi
 
