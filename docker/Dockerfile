@@ -6,7 +6,7 @@ FROM node:22-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git ca-certificates curl ripgrep vim sudo gosu jq \
+      git ca-certificates curl ripgrep vim sudo gosu jq wget \
       openssh-client \
       python3 python3-pip python3-venv \
       build-essential
