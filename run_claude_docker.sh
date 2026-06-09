@@ -241,6 +241,39 @@ MOUNTS+=(
   -v "${DIND_VOLUME}:/var/lib/docker"
 )
 
+# Optional caller-supplied read-only mounts. Space-separated list of
+# host:container pairs in CLAUDE_SANDBOX_RO_MOUNTS — one bind mount per
+# entry, all forced read-only via the :ro suffix. Use for reference
+# datasets, shared corpora, system config the agent should read but never
+# mutate. Host path must already exist; we refuse to launch otherwise so
+# Docker doesn't auto-create the source as a directory (same trap the
+# `check_not_directory` guard above protects against).
+#
+# Example env.<INSTANCE>.sh:
+#   export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference:/data/reference /etc/shared-config:/opt/config"
+RO_MOUNTS_RAW="${CLAUDE_SANDBOX_RO_MOUNTS:-}"
+if [[ -n "$RO_MOUNTS_RAW" ]]; then
+    for entry in $RO_MOUNTS_RAW; do
+        host_path="${entry%%:*}"
+        cont_path="${entry#*:}"
+        if [[ "$host_path" == "$entry" || -z "$cont_path" ]]; then
+            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS entry '$entry' is not 'host:container' form." >&2
+            exit 1
+        fi
+        if [[ "$host_path" != /* || "$cont_path" != /* ]]; then
+            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS entry '$entry' must use absolute paths on both sides." >&2
+            exit 1
+        fi
+        if [[ ! -e "$host_path" ]]; then
+            echo "CRITICAL ERROR: CLAUDE_SANDBOX_RO_MOUNTS host path '$host_path' does not exist on this host." >&2
+            echo "                Refusing to let Docker auto-create it as a directory." >&2
+            exit 1
+        fi
+        MOUNTS+=( -v "${host_path}:${cont_path}:ro" )
+        echo "ro-mount: ${host_path} -> ${cont_path}"
+    done
+fi
+
 # fiss-mcp (Terra MCP server) lifecycle. The server runs on the HOST (not in
 # the container) over HTTP. The container only sees a URL; it has no gcloud,
 # gsutil, ~/.config/gcloud, or google-cloud-* libs — the only path to GCP

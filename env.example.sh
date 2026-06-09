@@ -70,5 +70,13 @@ export CLAUDE_SANDBOX_INSTANCE=main
 # auto-created on first use. Override to point at your real project tree.
 export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 
+# Optional: extra read-only bind mounts. Space-separated list of
+# host:container pairs. Each host path must exist (launcher refuses to
+# start otherwise so Docker doesn't auto-create it as a directory).
+# Mounts are appended with :ro so the agent can read but never write.
+# Use for shared reference datasets, corpora, config trees.
+#
+#export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference:/data/reference /srv/corpus:/srv/corpus"
+
 unset __ENV_SCRIPT_DIR
 
