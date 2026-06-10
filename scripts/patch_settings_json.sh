@@ -24,7 +24,18 @@
 #   ./scripts/patch_settings_json.sh path/to/settings.json [...]
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# Portable SCRIPT_DIR — BSD readlink lacks -f.
+__resolve_dir() {
+    local src=${BASH_SOURCE[0]}
+    while [ -L "$src" ]; do
+        local d
+        d=$(cd -P "$(dirname "$src")" && pwd)
+        src=$(readlink "$src")
+        [[ $src != /* ]] && src=$d/$src
+    done
+    cd -P "$(dirname "$src")" && pwd
+}
+SCRIPT_DIR=$(__resolve_dir)
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; exit 1; }
