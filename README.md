@@ -21,7 +21,7 @@ Beyond the normal setup and build features, this sandbox has:
 
 I've tried to include everything I need for my typical work.
 
-This is still Linux only.  Mac build might be coming soon.
+Runs on **Linux** and **macOS** (Apple Silicon or Intel). User-facing scripts (`./setup_host.sh`, `./run_claude_docker.sh`, `./start_sandbox.sh`) detect the OS via `uname` and dispatch internally; you never invoke an OS-specific script directly. See [macOS limitations](#macos-limitations) for what's degraded.
 
 ## Quick start (fresh clone)
 
@@ -80,6 +80,8 @@ Approximate image size: ~3 GB.
 
 ## Prerequisites
 
+### Linux
+
 - Docker 28.x. Docker 29.x is **not** compatible with sysbox-runc —
   containers fail with `namespace {"time" ""} does not exist`
   ([sysbox#1011](https://github.com/nestybox/sysbox/issues/1011),
@@ -101,6 +103,21 @@ Approximate image size: ~3 GB.
   Linux 2/2023 are sysbox-supported per upstream — `setup_host.sh` itself
   only knows the Debian/Ubuntu apt path, so other distros need an adapted
   setup script.
+
+### macOS
+
+- macOS 12 (Monterey) or newer, Apple Silicon or Intel.
+- A Docker engine: **Docker Desktop** (default; `brew install --cask docker`) or **OrbStack** (`SANDBOX_DOCKER_ENGINE=orbstack ./setup_host.sh` — faster and lighter, proprietary).
+- Homebrew. `./setup_host.sh` installs it if missing.
+- `setup_host.sh` dispatches to `scripts/setup_host_macos.sh` automatically based on `uname -s`; you still invoke `./setup_host.sh`.
+
+#### macOS limitations
+
+- **No NVIDIA GPU access.** Apple Silicon has no NVIDIA hardware, Metal GPUs can't be exposed to Linux containers, and Docker's embedded VM has no path to either. CUDA-dependent workloads (PyTorch GPU, llama.cpp w/ CUDA, etc.) run only in CPU mode. The NVIDIA bug #1730 workaround block in `setup_host.sh` is skipped.
+- **No sysbox-runc isolation by default.** sysbox is a Linux-kernel-namespaces runtime; not portable to macOS. Docker Desktop's Linux VM (via Apple Hypervisor.framework) provides roughly equivalent host-to-container isolation — a kernel exploit from inside a container hits the VM, not macOS. If you specifically need sysbox features (DinD with user-namespace remap), set up Colima with a sysbox-Lima base (out of scope for the default setup).
+- **No DinD by default.** `run_claude_docker.sh` sets `SANDBOX_HAS_DIND=0` on macOS so the container's `start_script.sh` skips its inner dockerd. Docker-in-docker can be made to work on macOS but the nested-VM path is slow and weakly isolated; not worth the default.
+- **Slower bind-mount I/O.** Host paths reach the container via virtio-fs through Docker Desktop's VM. Codegraph indexing on a large repo is noticeably slower than on Linux. OrbStack is measurably faster than Docker Desktop here.
+- **No mail relay by default.** Linux's `setup_host.sh` configures host postfix with mynetworks so the in-container hook can send via SMTP. macOS has no stock outbound-MTA path; `setup_host_macos.sh` prints instructions for configuring `/etc/postfix/main.cf` with SMTP-AUTH against Gmail/SES/SendGrid, but does not automate it. Skip if you don't need email notifications.
 
 - No host-side Claude Code install required. Each sandbox prompts `/login` on its own first launch and stores the resulting OAuth token inside its own state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `claude-sandbox-persistent-state-<INSTANCE>/.claude/.credentials.json` in per-instance mode). The host's `~/.claude/` is NOT mounted into the container.
 
