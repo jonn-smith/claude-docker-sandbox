@@ -2,7 +2,7 @@
   <img src="assets/claude_docker_sandbox_logo.png" alt="Kmera Logo" width="600">
 </p>
 
-# Claude Code Sandbox _FOR LINUX_
+# Claude Code Sandbox
 
 A Docker-based sandbox for running the [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) CLI with local filesystem isolation. The container sees only a designated workspace directory and its own persistent state — the host's home directory, `/etc`, and everything else on the host remain invisible to the agent.
 
