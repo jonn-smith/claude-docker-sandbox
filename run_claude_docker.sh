@@ -63,7 +63,56 @@ USE_SHARED="${CLAUDE_SANDBOX_USE_SHARED:-0}"
 # contains a *symlink* (or a copy) of the script resolved SCRIPT_DIR to the
 # caller's CWD, redirecting shared state + persistent state lookups to a
 # location that has none of the repo's content.
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# Resolve SCRIPT_DIR portably: GNU `readlink -f` doesn't exist on BSD/macOS
+# without coreutils. Follow the symlink chain manually so this works on a
+# fresh Mac before setup_host has installed `greadlink`.
+__resolve_dir() {
+    local src=${BASH_SOURCE[0]}
+    while [ -L "$src" ]; do
+        local d
+        d=$(cd -P "$(dirname "$src")" && pwd)
+        src=$(readlink "$src")
+        [[ $src != /* ]] && src=$d/$src
+    done
+    cd -P "$(dirname "$src")" && pwd
+}
+SCRIPT_DIR=$(__resolve_dir)
+
+# Host OS branch. Most of the script is identical on Linux and macOS, but
+# a few host-only concerns differ (sysbox-runc availability, NVIDIA GPU
+# possibility, how the container reaches host-side fiss-mcp / vertex_proxy).
+# Gate those at the relevant points by checking IS_DARWIN.
+IS_DARWIN=0
+[[ "$(uname -s)" == "Darwin" ]] && IS_DARWIN=1
+
+# Pick the IP that host-side services (fiss-mcp, vertex_proxy) should bind
+# to so the container can reach them via host.docker.internal.
+#
+# Linux: bind only to the docker bridge gateway IP — the same address the
+# container reaches us at via `host.docker.internal:host-gateway`. Keeps
+# the listener off external interfaces (eth0/wlan0) without an iptables
+# fence. Fail fast if the bridge IP can't be determined.
+#
+# macOS: bind to 127.0.0.1. Docker Desktop routes the in-container
+# `host.docker.internal` name to the host's loopback via its embedded VM,
+# so 127.0.0.1 is reachable from the container without exposing the
+# listener to any external interface. There is no docker bridge gateway
+# on the host to inspect.
+resolve_host_bind_ip() {
+    if [[ "$IS_DARWIN" == "1" ]]; then
+        printf '127.0.0.1'
+        return 0
+    fi
+    local ip
+    ip=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)
+    if [[ -z "$ip" ]]; then
+        echo "host bind: could not determine docker bridge gateway IP via" >&2
+        echo "           \`docker network inspect bridge\`. Refusing to bind 0.0.0.0." >&2
+        echo "           Verify docker is running and the default bridge exists." >&2
+        return 1
+    fi
+    printf '%s' "$ip"
+}
 PERSISTENT_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-persistent-state${INSTANCE_SUFFIX}"
 SHARED_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-shared"
 SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
@@ -409,16 +458,12 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
   HOST_FISS_PORT="${FISS_MCP_PORT:-$((39000 + PORT_OFFSET))}"
   HOST_FISS_PATH="/mcp/"
 
-  # Bind only to the docker bridge gateway IP — the same address the container
-  # reaches us at via `host.docker.internal:host-gateway`. This keeps the MCP
-  # off external interfaces (eth0, wlan0) without needing iptables / firewall
-  # config. Refuse to launch if we can't determine the bridge IP rather than
-  # silently falling back to 0.0.0.0.
-  HOST_BIND_IP="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
-  if [[ -z "${HOST_BIND_IP}" ]]; then
-    echo "fiss-mcp: could not determine docker bridge gateway IP via" >&2
-    echo "          \`docker network inspect bridge\`. Refusing to bind 0.0.0.0." >&2
-    echo "          Verify docker is running and the default bridge exists." >&2
+  # Resolve the bind IP via the cross-OS helper at the top of this script.
+  # Linux → docker bridge gateway IP (off external interfaces, no iptables
+  # required). macOS → 127.0.0.1 (Docker Desktop routes host.docker.internal
+  # to host loopback via its VM).
+  if ! HOST_BIND_IP=$(resolve_host_bind_ip); then
+    echo "fiss-mcp: refusing to bind without a known-safe IP." >&2
     exit 1
   fi
 
@@ -510,12 +555,9 @@ if [[ "$VERTEX_ENABLED" == "1" ]]; then
   VERTEX_PORT_OFFSET=$(printf '%s' "${CLAUDE_SANDBOX_INSTANCE}" | cksum | awk '{print $1 % 1000}')
   HOST_VERTEX_PORT="${VERTEX_PROXY_PORT:-$((38000 + VERTEX_PORT_OFFSET))}"
 
-  # Bind only to the docker bridge gateway IP — same model as fiss-mcp. Keeps
-  # the proxy off external interfaces (eth0, wlan0) without needing iptables.
-  VERTEX_BIND_IP="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
-  if [[ -z "${VERTEX_BIND_IP}" ]]; then
-    echo "vertex_proxy: could not determine docker bridge gateway IP via" >&2
-    echo "              \`docker network inspect bridge\`. Refusing to bind 0.0.0.0." >&2
+  # Same bind-IP rules as fiss-mcp — see resolve_host_bind_ip at the top.
+  if ! VERTEX_BIND_IP=$(resolve_host_bind_ip); then
+    echo "vertex_proxy: refusing to bind without a known-safe IP." >&2
     exit 1
   fi
 
@@ -588,47 +630,62 @@ fi
 
 # Runtime + GPU selection.
 #
-# sysbox-runc gives us docker-in-docker, user-namespace remap, and stronger
-# isolation, but it does NOT support NVIDIA GPU passthrough
-# (https://github.com/nestybox/sysbox/issues/50). If the host has GPUs, fall
-# back to the default runc runtime and forward them with --gpus all.
+# Linux: sysbox-runc gives us docker-in-docker, user-namespace remap, and
+# stronger isolation. It does NOT support NVIDIA GPU passthrough
+# (https://github.com/nestybox/sysbox/issues/50), so if the host has GPUs
+# we fall back to the default runc runtime and forward them with --gpus all.
+#
+# macOS: sysbox-runc is Linux-only (kernel namespaces). Docker Desktop's
+# embedded Linux VM gives roughly equivalent host-to-container isolation
+# via Hypervisor.framework, so the trade is fine. NVIDIA GPU passthrough
+# is impossible on macOS (no NVIDIA hardware on Apple Silicon, no driver
+# path from Docker VM to Metal). DinD inside the container is also
+# disabled by default — `start_script.sh` skips its inner dockerd when
+# SANDBOX_HAS_DIND=0.
 RUNTIME_FLAG=(--runtime=sysbox-runc)
 GPU_FLAGS=()
 HAVE_GPU=0
-if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
-  HAVE_GPU=1
-fi
 
-# Don't switch runtimes if Docker has no 'nvidia' runtime registered — the
-# --gpus flag would just error out and we'd lose sysbox for no gain.
-if [[ "${HAVE_GPU}" == "1" ]]; then
-  if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+if [[ "$IS_DARWIN" == "1" ]]; then
+  YEL=$'\033[1;33m'; RST=$'\033[0m'
+  echo "${YEL}macOS host: no sysbox-runc (using default runc), no GPU passthrough, no DinD.${RST}"
+  RUNTIME_FLAG=()
+else
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    HAVE_GPU=1
+  fi
+
+  # Don't switch runtimes if Docker has no 'nvidia' runtime registered — the
+  # --gpus flag would just error out and we'd lose sysbox for no gain.
+  if [[ "${HAVE_GPU}" == "1" ]]; then
+    if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+      RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
+      echo
+      echo "${YEL}WARNING: GPU detected but Docker has no 'nvidia' runtime registered.${RST}"
+      echo "${YEL}Install nvidia-container-toolkit and run:${RST}"
+      echo "${YEL}    sudo nvidia-ctk runtime configure --runtime=docker${RST}"
+      echo "${YEL}    sudo systemctl restart docker${RST}"
+      echo "${YEL}Falling back to sysbox-runc with NO GPU passthrough.${RST}"
+      echo
+      HAVE_GPU=0
+    fi
+  fi
+
+  if [[ "${HAVE_GPU}" == "1" ]]; then
     RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
     echo
-    echo "${YEL}WARNING: GPU detected but Docker has no 'nvidia' runtime registered.${RST}"
-    echo "${YEL}Install nvidia-container-toolkit and run:${RST}"
-    echo "${YEL}    sudo nvidia-ctk runtime configure --runtime=docker${RST}"
-    echo "${YEL}    sudo systemctl restart docker${RST}"
-    echo "${YEL}Falling back to sysbox-runc with NO GPU passthrough.${RST}"
+    echo "${YEL}========================================================================${RST}"
+    echo "${YEL}GPU DETECTED — switching container runtime from sysbox-runc to runc.${RST}"
+    echo "${YEL}    * --gpus all will be forwarded to the container${RST}"
+    echo "${YEL}    * docker-in-docker (DinD) inside the sandbox WILL NOT WORK${RST}"
+    echo "${YEL}    * user-namespace remap and extra sysbox isolation: DISABLED${RST}"
+    echo "${YEL}    * upstream issue: https://github.com/nestybox/sysbox/issues/50${RST}"
+    echo "${YEL}If you need DinD instead, hide nvidia-smi from PATH before launching.${RST}"
+    echo "${YEL}========================================================================${RST}"
     echo
-    HAVE_GPU=0
+    RUNTIME_FLAG=()
+    GPU_FLAGS=(--gpus all)
   fi
-fi
-
-if [[ "${HAVE_GPU}" == "1" ]]; then
-  RED=$'\033[1;31m'; YEL=$'\033[1;33m'; RST=$'\033[0m'
-  echo
-  echo "${YEL}========================================================================${RST}"
-  echo "${YEL}GPU DETECTED — switching container runtime from sysbox-runc to runc.${RST}"
-  echo "${YEL}    * --gpus all will be forwarded to the container${RST}"
-  echo "${YEL}    * docker-in-docker (DinD) inside the sandbox WILL NOT WORK${RST}"
-  echo "${YEL}    * user-namespace remap and extra sysbox isolation: DISABLED${RST}"
-  echo "${YEL}    * upstream issue: https://github.com/nestybox/sysbox/issues/50${RST}"
-  echo "${YEL}If you need DinD instead, hide nvidia-smi from PATH before launching.${RST}"
-  echo "${YEL}========================================================================${RST}"
-  echo
-  RUNTIME_FLAG=()
-  GPU_FLAGS=(--gpus all)
 fi
 
 # Make it so. Any args ($@) are passed to `claude` inside the container —
@@ -649,7 +706,7 @@ docker run --rm -it \
   -e CLAUDE_NOTIFY_EMAIL="${CLAUDE_NOTIFY_EMAIL:-}" \
   -e CLAUDE_NOTIFY_FROM="${CLAUDE_NOTIFY_FROM:-claude-sandbox}" \
   -e CLAUDE_NOTIFY_HOSTNAME="${CLAUDE_NOTIFY_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}" \
-  -e SANDBOX_HAS_DIND="$([[ "${HAVE_GPU}" == "1" ]] && echo 0 || echo 1)" \
+  -e SANDBOX_HAS_DIND="$([[ "${HAVE_GPU}" == "1" || "${IS_DARWIN}" == "1" ]] && echo 0 || echo 1)" \
   -e FISS_MCP="${FISS_MCP_ENABLED}" \
   -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
   -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
