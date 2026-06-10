@@ -701,12 +701,17 @@ fi
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
 # Note: not using `exec` so the EXIT trap can still fire to clean up the
 # host fiss-mcp process after the container exits.
+# `${arr[@]+"${arr[@]}"}` form is the empty-array-safe expansion. macOS
+# ships bash 3.2 by default, which raises "unbound variable" on a plain
+# "${arr[@]}" reference when the array is empty under `set -u`. RUNTIME_FLAG
+# and GPU_FLAGS are both empty on Darwin (no sysbox, no NVIDIA), so the
+# guard is required there; harmless on Linux.
 docker run --rm -it \
   --name "${CONTAINER_NAME}" \
   "${MOUNTS[@]}" \
   --add-host=host.docker.internal:host-gateway \
-  "${RUNTIME_FLAG[@]}" \
-  "${GPU_FLAGS[@]}" \
+  ${RUNTIME_FLAG[@]+"${RUNTIME_FLAG[@]}"} \
+  ${GPU_FLAGS[@]+"${GPU_FLAGS[@]}"} \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
   -e HEADROOM="${HEADROOM:-0}" \
