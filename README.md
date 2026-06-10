@@ -23,7 +23,11 @@ I've tried to include everything I need for my typical work.
 
 Runs on **Linux** and **macOS** (Apple Silicon or Intel). User-facing scripts (`./setup_host.sh`, `./run_claude_docker.sh`, `./start_sandbox.sh`) detect the OS via `uname` and dispatch internally; you never invoke an OS-specific script directly. See [macOS limitations](#macos-limitations) for what's degraded.
 
-> **Tested configurations** — only Ubuntu **22.04 LTS** + **24.04 LTS** (noble) on x86_64 GCP VMs and **macOS 15** on Apple Silicon (M-series, Docker Desktop). Other Linux distros listed in [Prerequisites](#prerequisites) should work via the same `setup_host.sh` codepath but haven't been driven end-to-end. macOS on **Intel** is in the same code path as Apple Silicon but is untested. Report what does and doesn't work.
+> **Tested configurations** —
+> - **Ubuntu 24.04.2 LTS** (noble) and **Ubuntu 24.04.4 LTS** (noble) on x86_64 GCP VMs.
+> - **macOS 15.7.7** (build 24G720, Darwin 24.6.0) on **Apple Silicon** (arm64, Docker Desktop).
+>
+> Other Linux distros listed in [Prerequisites](#prerequisites) should work via the same `setup_host.sh` codepath but haven't been driven end-to-end. macOS on **Intel** is in the same code path as Apple Silicon but is untested. Report what does and doesn't work.
 
 ## Quick start (fresh clone)
 
