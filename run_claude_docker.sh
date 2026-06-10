@@ -183,6 +183,25 @@ if [[ "$USE_SHARED" == "1" ]]; then
       "$SANDBOX_HOME/.claude/projects"
     touch "$SANDBOX_HOME/.claude/history.jsonl"
     [ -s "$SANDBOX_HOME/.claude.json" ] || echo '{}' > "$SANDBOX_HOME/.claude.json"
+
+    # history.jsonl redirect — keep per-instance without nesting a file
+    # mount inside the shared dir mount (which Docker Desktop's virtiofs
+    # refuses on macOS). In the shared .claude/ dir, history.jsonl is a
+    # SYMLINK to /per-instance-history.jsonl — a container-only path. Each
+    # instance bind-mounts ITS history.jsonl at that top-level path, so
+    # ~/.claude/history.jsonl → symlink → /per-instance-history.jsonl →
+    # per-instance host file. Top-level file mounts are not nested in any
+    # other bind mount, so virtiofs handles them fine. Linux behavior is
+    # identical: the same redirect pattern gives the same per-instance
+    # semantics that the old nested file mount gave.
+    SHARED_HIST="$SHARED_HOME/.claude/history.jsonl"
+    if [[ ! -L "$SHARED_HIST" ]]; then
+        # Remove any pre-existing file/dir at the path (legacy state from
+        # before the redirect). Replace with the symlink. Idempotent: a
+        # subsequent launch finds the symlink already in place and skips.
+        rm -rf "$SHARED_HIST"
+        ln -s /per-instance-history.jsonl "$SHARED_HIST"
+    fi
     echo "layout: shared (SHARED_HOME=${SHARED_HOME}, hot=${SANDBOX_HOME})"
 else
     # --- original per-instance layout ------------------------------------
@@ -270,22 +289,13 @@ if [[ "$USE_SHARED" == "1" ]]; then
       -v "${SANDBOX_HOME}/.claude/shell-snapshots:/home/claude/.claude/shell-snapshots"
       -v "${SANDBOX_HOME}/.claude/session-env:/home/claude/.claude/session-env"
       -v "${SANDBOX_HOME}/.claude/projects:/home/claude/.claude/projects"
+      # Per-instance history.jsonl reached via the shared-dir symlink
+      # `~/.claude/history.jsonl -> /per-instance-history.jsonl`. The mount
+      # target is at the container's top level (NOT nested inside the
+      # shared .claude/ dir mount), so it works on both Linux and macOS
+      # Docker Desktop / virtiofs.
+      -v "${SANDBOX_HOME}/.claude/history.jsonl:/per-instance-history.jsonl"
     )
-    # history.jsonl is a FILE mount nested inside the SHARED .claude/ dir
-    # mount. Docker Desktop's virtiofs (macOS) can't materialize a file
-    # mountpoint inside an already-bind-mounted directory — the launch
-    # fails with `mountpoint "..." is outside of rootfs`. Nested directory
-    # mounts (cache, file-history, ...) work because virtiofs exposes them
-    # as sub-paths of the parent, no actual kernel mount-on-mount needed.
-    # On Linux this works fine; keep the per-instance file mount there.
-    # On macOS skip it — history.jsonl ends up in the shared dir, so
-    # shared-mode instances on the same Mac share history. Acceptable
-    # trade-off (most operators run one sandbox at a time).
-    if [[ "$IS_DARWIN" == "0" ]]; then
-        MOUNTS+=( -v "${SANDBOX_HOME}/.claude/history.jsonl:/home/claude/.claude/history.jsonl" )
-    else
-        echo "macOS host: history.jsonl mount skipped (virtiofs nested-file limitation); shared-mode instances share history." >&2
-    fi
 else
     MOUNTS+=(
       -v "${SANDBOX_HOME}/.claude:/home/claude/.claude"
