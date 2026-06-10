@@ -270,8 +270,22 @@ if [[ "$USE_SHARED" == "1" ]]; then
       -v "${SANDBOX_HOME}/.claude/shell-snapshots:/home/claude/.claude/shell-snapshots"
       -v "${SANDBOX_HOME}/.claude/session-env:/home/claude/.claude/session-env"
       -v "${SANDBOX_HOME}/.claude/projects:/home/claude/.claude/projects"
-      -v "${SANDBOX_HOME}/.claude/history.jsonl:/home/claude/.claude/history.jsonl"
     )
+    # history.jsonl is a FILE mount nested inside the SHARED .claude/ dir
+    # mount. Docker Desktop's virtiofs (macOS) can't materialize a file
+    # mountpoint inside an already-bind-mounted directory — the launch
+    # fails with `mountpoint "..." is outside of rootfs`. Nested directory
+    # mounts (cache, file-history, ...) work because virtiofs exposes them
+    # as sub-paths of the parent, no actual kernel mount-on-mount needed.
+    # On Linux this works fine; keep the per-instance file mount there.
+    # On macOS skip it — history.jsonl ends up in the shared dir, so
+    # shared-mode instances on the same Mac share history. Acceptable
+    # trade-off (most operators run one sandbox at a time).
+    if [[ "$IS_DARWIN" == "0" ]]; then
+        MOUNTS+=( -v "${SANDBOX_HOME}/.claude/history.jsonl:/home/claude/.claude/history.jsonl" )
+    else
+        echo "macOS host: history.jsonl mount skipped (virtiofs nested-file limitation); shared-mode instances share history." >&2
+    fi
 else
     MOUNTS+=(
       -v "${SANDBOX_HOME}/.claude:/home/claude/.claude"
