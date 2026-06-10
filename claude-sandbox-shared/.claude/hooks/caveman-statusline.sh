@@ -19,10 +19,16 @@
 
 PLUGIN_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins"
 
-# Cache first — only one entry under cache/caveman/caveman/<sha>/ at any
-# time. The glob is intentional so a pin bump doesn't break us.
+# Upstream caveman has shipped two on-disk layouts over the v1.x line:
+#   1. <root>/hooks/caveman-statusline.sh           (pre-1.8 layout)
+#   2. <root>/src/hooks/caveman-statusline.sh       (current — 1.8+)
+# claude-code's cache dir mirrors whichever layout the source was
+# published in, so we probe both forms at the cache/<sha>/ path AND at
+# the vendored marketplaces/ path.
 for candidate in \
+    "$PLUGIN_ROOT"/cache/caveman/caveman/*/src/hooks/caveman-statusline.sh \
     "$PLUGIN_ROOT"/cache/caveman/caveman/*/hooks/caveman-statusline.sh \
+    "$PLUGIN_ROOT"/marketplaces/caveman/src/hooks/caveman-statusline.sh \
     "$PLUGIN_ROOT"/marketplaces/caveman/hooks/caveman-statusline.sh ; do
     if [ -x "$candidate" ]; then
         exec bash "$candidate" "$@"
