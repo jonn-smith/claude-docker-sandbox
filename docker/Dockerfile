@@ -71,7 +71,7 @@ RUN python3 -m venv /opt/claude-venv && \
     /opt/claude-venv/bin/pip install --no-cache-dir \
       numpy pandas matplotlib scipy scikit-learn seaborn \
       ipython jupyter requests \
-      "headroom-ai[proxy]==0.6.1" && \
+      "headroom-ai[proxy]==0.24.0" && \
     chown -R claude:claude /opt/claude-venv
 
 # fiss-mcp lives on the HOST, not in the container. The launcher
