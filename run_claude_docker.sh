@@ -321,8 +321,16 @@ if [[ -n "$RO_MOUNTS_RAW" ]]; then
             echo "                Refusing to let Docker auto-create it as a directory." >&2
             exit 1
         fi
-        # readlink -f follows symlinks, normalizes // and trailing /.
-        canon=$(readlink -f "$raw")
+        # Portable canonicalization: `readlink -f` doesn't exist on BSD
+        # without coreutils. For a directory, `cd -P` resolves symlinks
+        # and gives an absolute path. For a file (rare for an RO mount
+        # but the validation above accepts any -e), resolve the parent
+        # dir the same way and append the basename.
+        if [[ -d "$raw" ]]; then
+            canon=$(cd -P "$raw" && pwd)
+        else
+            canon="$(cd -P "$(dirname "$raw")" && pwd)/$(basename "$raw")"
+        fi
         if [[ -z "${RO_SEEN[$canon]:-}" ]]; then
             RO_SEEN[$canon]=1
             RO_PATHS+=("$canon")
