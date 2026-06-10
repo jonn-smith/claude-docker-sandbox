@@ -57,41 +57,71 @@ fi
 
 ################################################################################
 
-# Docker engine selection. We default to Docker Desktop (the most common
-# choice and the one Apple-Silicon developers tend to already have). The
-# user can opt for OrbStack instead by setting SANDBOX_DOCKER_ENGINE=orbstack
-# — OrbStack is faster and lighter but proprietary.
+# Docker engine selection.
+#
+# Detect any existing working Docker engine first — many operators
+# already have Docker Desktop installed via the official .dmg from
+# docker.com (NOT through Homebrew). `brew list --cask docker` doesn't
+# see that install, so blindly running `brew install --cask docker`
+# would fail with "It seems there is already an App at '/Applications/
+# Docker.app'". Skip the brew install when a working docker is already
+# present and just remind the operator to make sure it's running.
+#
+# Preference order:
+#   1. Working docker (any installer) → leave it alone, print version.
+#   2. SANDBOX_DOCKER_ENGINE=orbstack → install OrbStack via brew cask.
+#   3. Default → install Docker Desktop via brew cask.
 ENGINE="${SANDBOX_DOCKER_ENGINE:-docker-desktop}"
 
 echo
-echo "${GRN}-- Docker engine: $ENGINE --${RST}"
-case "$ENGINE" in
-  docker-desktop)
-    if ! brew list --cask docker >/dev/null 2>&1; then
+echo "${GRN}-- Docker engine --${RST}"
+
+if command -v docker >/dev/null 2>&1; then
+  echo "docker: found at $(command -v docker)"
+  echo "version:"
+  docker --version 2>&1 | sed 's/^/  /'
+  if docker info >/dev/null 2>&1; then
+    echo "daemon: reachable (existing install will be used; skipping brew step)"
+  else
+    echo "${YEL}daemon: not reachable. docker CLI is on PATH but the engine isn't running.${RST}"
+    echo "${YEL}        Start Docker Desktop / OrbStack / whatever provided your${RST}"
+    echo "${YEL}        docker binary, then re-run ./setup_host.sh (or skip straight${RST}"
+    echo "${YEL}        to \`cd docker && make\` once the daemon responds).${RST}"
+  fi
+else
+  echo "docker: not on PATH. Will install via Homebrew (SANDBOX_DOCKER_ENGINE=$ENGINE)."
+  case "$ENGINE" in
+    docker-desktop)
+      if [[ -d /Applications/Docker.app ]]; then
+        echo "${YEL}WARNING: /Applications/Docker.app exists but the docker CLI is not on${RST}"
+        echo "${YEL}         PATH. Likely a partial install. Either launch the existing${RST}"
+        echo "${YEL}         /Applications/Docker.app to finish its setup, or remove it${RST}"
+        echo "${YEL}         (\`rm -rf /Applications/Docker.app\`) and re-run this script${RST}"
+        echo "${YEL}         to do a clean brew install.${RST}"
+        exit 1
+      fi
       echo "Installing Docker Desktop (cask)..."
       brew install --cask docker
-    else
-      echo "Docker Desktop already installed via Homebrew cask."
-    fi
-    echo "${YEL}Action required: launch Docker Desktop once from /Applications/Docker.app${RST}"
-    echo "${YEL}so it can complete its first-run permissions setup. Subsequent launches${RST}"
-    echo "${YEL}of run_claude_docker.sh will rely on the engine already being running.${RST}"
-    ;;
-  orbstack)
-    if ! brew list --cask orbstack >/dev/null 2>&1; then
+      echo "${YEL}Action required: launch Docker Desktop once from /Applications/Docker.app${RST}"
+      echo "${YEL}so it can complete its first-run permissions setup.${RST}"
+      ;;
+    orbstack)
+      if [[ -d /Applications/OrbStack.app ]]; then
+        echo "${YEL}WARNING: /Applications/OrbStack.app exists but the docker CLI is not on${RST}"
+        echo "${YEL}         PATH. Launch the existing app or remove it before re-running.${RST}"
+        exit 1
+      fi
       echo "Installing OrbStack (cask)..."
       brew install --cask orbstack
-    else
-      echo "OrbStack already installed via Homebrew cask."
-    fi
-    echo "${YEL}Action required: launch OrbStack once from /Applications/OrbStack.app${RST}"
-    echo "${YEL}so it can register the docker CLI socket on PATH.${RST}"
-    ;;
-  *)
-    echo "${RED}Unknown SANDBOX_DOCKER_ENGINE='$ENGINE'. Use 'docker-desktop' or 'orbstack'.${RST}" >&2
-    exit 1
-    ;;
-esac
+      echo "${YEL}Action required: launch OrbStack once from /Applications/OrbStack.app${RST}"
+      echo "${YEL}so it can register the docker CLI socket on PATH.${RST}"
+      ;;
+    *)
+      echo "${RED}Unknown SANDBOX_DOCKER_ENGINE='$ENGINE'. Use 'docker-desktop' or 'orbstack'.${RST}" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 ################################################################################
 
