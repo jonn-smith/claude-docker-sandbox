@@ -124,6 +124,7 @@ Approximate image size: ~3 GB.
 - **No DinD by default.** `run_claude_docker.sh` sets `SANDBOX_HAS_DIND=0` on macOS so the container's `start_script.sh` skips its inner dockerd. Docker-in-docker can be made to work on macOS but the nested-VM path is slow and weakly isolated; not worth the default.
 - **Slower bind-mount I/O.** Host paths reach the container via virtio-fs through Docker Desktop's VM. Codegraph indexing on a large repo is noticeably slower than on Linux. OrbStack is measurably faster than Docker Desktop here.
 - **No mail relay by default.** Linux's `setup_host.sh` configures host postfix with mynetworks so the in-container hook can send via SMTP. macOS has no stock outbound-MTA path; `setup_host_macos.sh` prints instructions for configuring `/etc/postfix/main.cf` with SMTP-AUTH against Gmail/SES/SendGrid, but does not automate it. Skip if you don't need email notifications.
+- **Email notifications remain untested and may not work even after configuration.**
 
 - No host-side Claude Code install required. Each sandbox prompts `/login` on its own first launch and stores the resulting OAuth token inside its own state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `claude-sandbox-persistent-state-<INSTANCE>/.claude/.credentials.json` in per-instance mode). The host's `~/.claude/` is NOT mounted into the container.
 
