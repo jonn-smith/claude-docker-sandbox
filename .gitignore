@@ -17,6 +17,16 @@ claude-sandbox-shared/.claude/*
 !claude-sandbox-shared/.claude/PLUGIN_PINS.md
 !claude-sandbox-shared/.claude/skills/
 !claude-sandbox-shared/.claude/skills/**
+# Vendor the caveman plugin source so a fresh clone has it without
+# network round-trips to JuliusBrussee/caveman at first session. Pinned
+# at v1.8.2 (commit 63a91eca...) — bump by replacing the tree in place
+# and updating PLUGIN_PINS.md. The plugins/cache/ dir stays gitignored;
+# claude-code rebuilds it from the vendored marketplaces tree on first
+# session.
+!claude-sandbox-shared/.claude/plugins/
+!claude-sandbox-shared/.claude/plugins/marketplaces/
+!claude-sandbox-shared/.claude/plugins/marketplaces/caveman/
+!claude-sandbox-shared/.claude/plugins/marketplaces/caveman/**
 
 
 workspace/*

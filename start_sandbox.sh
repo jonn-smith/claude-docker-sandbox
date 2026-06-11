@@ -28,7 +28,19 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# Portable SCRIPT_DIR resolution — BSD `readlink` (macOS) has no `-f`.
+# Manually walk symlink chain so this works on Linux and macOS alike.
+__resolve_dir() {
+    local src=${BASH_SOURCE[0]}
+    while [ -L "$src" ]; do
+        local d
+        d=$(cd -P "$(dirname "$src")" && pwd)
+        src=$(readlink "$src")
+        [[ $src != /* ]] && src=$d/$src
+    done
+    cd -P "$(dirname "$src")" && pwd
+}
+SCRIPT_DIR=$(__resolve_dir)
 # shellcheck source=scripts/sandbox_lib.sh
 source "$SCRIPT_DIR/scripts/sandbox_lib.sh"
 

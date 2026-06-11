@@ -1,6 +1,15 @@
 # Plugin pin ledger
 
-`settings.json` pins each third-party plugin/marketplace to a tag (`ref: "vX.Y.Z"`). Tags are mutable on the upstream side — anyone with push access can force-move them. This file records the immutable commit SHA each pinned tag SHOULD resolve to at the time it was committed, so a future maintainer can verify the upstream hasn't silently rewritten history.
+Some third-party plugins are **vendored** — the marketplace source tree
+is committed to this repo so a fresh clone has working plugins without
+fetching from GitHub at first session. Others are **referenced** via
+`settings.json` `extraKnownMarketplaces` with a `ref: "vX.Y.Z"` tag.
+
+Tags are mutable on the upstream side — anyone with push access can
+force-move them. This file records the immutable commit SHA each
+pinned tag SHOULD resolve to at the time it was committed/vendored, so
+a future maintainer can verify the upstream hasn't silently rewritten
+history.
 
 To verify a pin:
 
@@ -13,9 +22,13 @@ If the resolved SHA does NOT match the value in this file, do NOT bump — inves
 
 ## Pinned refs
 
-| Plugin / marketplace | settings.json key | ref | expected commit SHA |
+| Plugin / marketplace | mode | ref | expected commit SHA |
 |---|---|---|---|
-| [caveman](https://github.com/JuliusBrussee/caveman) | `extraKnownMarketplaces.caveman` | `v1.8.2` | `63a91ecadbf4c4719a4602a5abb00883f9966034` |
+| [caveman](https://github.com/JuliusBrussee/caveman) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/` | `v1.8.2` | `63a91ecadbf4c4719a4602a5abb00883f9966034` |
+
+The `extraKnownMarketplaces.caveman` entry in `settings.json` is kept as a
+fallback — if the vendored tree is ever absent, claude-code can still
+clone from upstream at the same pinned ref.
 
 ## Automatic drift detection
 
@@ -26,17 +39,32 @@ If the resolved SHA does NOT match the value in this file, do NOT bump — inves
 
 The probe is non-blocking; it never wipes the cache automatically.
 
-## Bump procedure
+## Bump procedure (vendored)
 
-1. Pick the new upstream tag.
-2. Resolve its commit SHA with the snippet above.
-3. Update `ref:` in `settings.json`, the SHA row in this table, AND the hardcoded SHA in `check_pin caveman <SHA>` near the bottom of `docker/start_script.sh` — all three must agree, all in the same commit.
-4. Commit message should reference both the old and new SHAs so the upstream-rewrite case stays auditable.
-5. To force every running sandbox to actually pull the new ref (Claude Code uses `known_marketplaces.json` as the source-of-truth for *existing* installs, not `settings.json`), wipe the cache and let claude re-resolve:
+1. Pick the new upstream tag (e.g. `v1.9.0`).
+2. Clone fresh + verify SHA:
    ```bash
-   cd claude-sandbox-shared/.claude/plugins
-   rm -rf marketplaces/<name> cache/<name> data/<name>-<name>
-   jq 'del(.["<name>"])' known_marketplaces.json > tmp \
-     && mv tmp known_marketplaces.json
+   tmp=$(mktemp -d) && git clone --depth 1 --branch v1.9.0 https://github.com/JuliusBrussee/caveman "$tmp/caveman"
+   git -C "$tmp/caveman" rev-parse HEAD       # capture this
    ```
-   Then restart the sandbox.
+3. Replace the vendored tree (strip `.git/` so git doesn't see a nested repo):
+   ```bash
+   rm -rf claude-sandbox-shared/.claude/plugins/marketplaces/caveman
+   cp -a "$tmp/caveman" claude-sandbox-shared/.claude/plugins/marketplaces/caveman
+   rm -rf claude-sandbox-shared/.claude/plugins/marketplaces/caveman/.git
+   ```
+4. Update `ref:` in `settings.json`, the SHA row in this table, AND the
+   hardcoded SHA in `check_pin caveman <SHA>` near the bottom of
+   `docker/start_script.sh` — all three must agree.
+5. Wipe any host-side claude-code cache so it rebuilds from the new vendored source:
+   ```bash
+   rm -rf claude-sandbox-shared/.claude/plugins/cache/caveman \
+          claude-sandbox-shared/.claude/plugins/data/caveman-caveman
+   jq 'del(.caveman)' claude-sandbox-shared/.claude/plugins/known_marketplaces.json \
+     > /tmp/km.json && mv /tmp/km.json claude-sandbox-shared/.claude/plugins/known_marketplaces.json
+   ```
+6. Commit message should reference both the old and new SHAs so the
+   upstream-rewrite case stays auditable.
+
+To verify the upstream tag's SHA matches what we vendored, use the
+snippet at the top of this file.

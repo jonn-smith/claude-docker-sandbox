@@ -2,7 +2,7 @@
   <img src="assets/claude_docker_sandbox_logo.png" alt="Kmera Logo" width="600">
 </p>
 
-# Claude Code Sandbox _FOR LINUX_
+# Claude Code Sandbox
 
 A Docker-based sandbox for running the [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) CLI with local filesystem isolation. The container sees only a designated workspace directory and its own persistent state — the host's home directory, `/etc`, and everything else on the host remain invisible to the agent.
 
@@ -16,12 +16,18 @@ Beyond the normal setup and build features, this sandbox has:
 - A built-in, pre-configured [headroom](https://github.com/chopratejas/headroom) installation (runtime-disable-able)
 - A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra. The server runs on the **host**, not inside the container, so the sandbox has no `gcloud` / `gsutil` / `google-cloud-*` libs and no `~/.config/gcloud` mount — the only path from inside the sandbox to Terra/GCP is the MCP tools the server exposes. Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
 - A built-in [CodeGraph](https://github.com/colbymchenry/codegraph) MCP server (stdio, in-container) that gives the agent a pre-indexed tree-sitter code graph — `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, etc. — instead of grep+Read chains. Maintainer benchmarks claim ~58% fewer tool calls and ~16% cheaper turns (directional, single-author). Index is auto-built on first session per workdir via a SessionStart hook and kept current by an in-process file watcher. Disable per-launch with `CODEGRAPH=0`.
-- The [caveman](https://github.com/JuliusBrussee/caveman) compression plugin enabled by default at intensity `full` (tracked via `.caveman-active`). Override per session with `/caveman lite|full|ultra` or `stop caveman`.
+- The [caveman](https://github.com/JuliusBrussee/caveman) compression plugin **vendored at v1.8.2** under `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/`. No network round-trip at first session — fresh clones get the plugin source directly. Enabled by default at intensity `full` (tracked via `.caveman-active`), with the `[CAVEMAN]` chip wired into the statusline. Override per session with `/caveman lite|full|ultra` or `stop caveman`. Bump procedure in `claude-sandbox-shared/.claude/PLUGIN_PINS.md`.
 - An interactive launcher (`start_sandbox.sh`) that lets you pick instance, resume an existing Claude session, and choose a workdir from an fzf menu, instead of hand-sourcing `env.<INSTANCE>.sh` and running `run_claude_docker.sh` directly.
 
 I've tried to include everything I need for my typical work.
 
-This is still Linux only.  Mac build might be coming soon.
+Runs on **Linux** and **macOS** (Apple Silicon or Intel). User-facing scripts (`./setup_host.sh`, `./run_claude_docker.sh`, `./start_sandbox.sh`) detect the OS via `uname` and dispatch internally; you never invoke an OS-specific script directly. See [macOS limitations](#macos-limitations) for what's degraded.
+
+> **Tested configurations** —
+> - **Ubuntu 24.04.2 LTS** (noble) and **Ubuntu 24.04.4 LTS** (noble) on x86_64 GCP VMs.
+> - **macOS 15.7.7** (build 24G720, Darwin 24.6.0) on **Apple Silicon** (arm64, Docker Desktop).
+>
+> Other Linux distros listed in [Prerequisites](#prerequisites) should work via the same `setup_host.sh` codepath but haven't been driven end-to-end. macOS on **Intel** is in the same code path as Apple Silicon but is untested. Report what does and doesn't work.
 
 ## Quick start (fresh clone)
 
@@ -80,6 +86,8 @@ Approximate image size: ~3 GB.
 
 ## Prerequisites
 
+### Linux
+
 - Docker 28.x. Docker 29.x is **not** compatible with sysbox-runc —
   containers fail with `namespace {"time" ""} does not exist`
   ([sysbox#1011](https://github.com/nestybox/sysbox/issues/1011),
@@ -101,6 +109,22 @@ Approximate image size: ~3 GB.
   Linux 2/2023 are sysbox-supported per upstream — `setup_host.sh` itself
   only knows the Debian/Ubuntu apt path, so other distros need an adapted
   setup script.
+
+### macOS
+
+- macOS 12 (Monterey) or newer, Apple Silicon or Intel.
+- A Docker engine: **Docker Desktop** (default; `brew install --cask docker`) or **OrbStack** (`SANDBOX_DOCKER_ENGINE=orbstack ./setup_host.sh` — faster and lighter, proprietary).
+- Homebrew. `./setup_host.sh` installs it if missing.
+- `setup_host.sh` dispatches to `scripts/setup_host_macos.sh` automatically based on `uname -s`; you still invoke `./setup_host.sh`.
+
+#### macOS limitations
+
+- **No NVIDIA GPU access.** Apple Silicon has no NVIDIA hardware, Metal GPUs can't be exposed to Linux containers, and Docker's embedded VM has no path to either. CUDA-dependent workloads (PyTorch GPU, llama.cpp w/ CUDA, etc.) run only in CPU mode. The NVIDIA bug #1730 workaround block in `setup_host.sh` is skipped.
+- **No sysbox-runc isolation by default.** sysbox is a Linux-kernel-namespaces runtime; not portable to macOS. Docker Desktop's Linux VM (via Apple Hypervisor.framework) provides roughly equivalent host-to-container isolation — a kernel exploit from inside a container hits the VM, not macOS. If you specifically need sysbox features (DinD with user-namespace remap), set up Colima with a sysbox-Lima base (out of scope for the default setup).
+- **No DinD by default.** `run_claude_docker.sh` sets `SANDBOX_HAS_DIND=0` on macOS so the container's `start_script.sh` skips its inner dockerd. Docker-in-docker can be made to work on macOS but the nested-VM path is slow and weakly isolated; not worth the default.
+- **Slower bind-mount I/O.** Host paths reach the container via virtio-fs through Docker Desktop's VM. Codegraph indexing on a large repo is noticeably slower than on Linux. OrbStack is measurably faster than Docker Desktop here.
+- **No mail relay by default.** Linux's `setup_host.sh` configures host postfix with mynetworks so the in-container hook can send via SMTP. macOS has no stock outbound-MTA path; `setup_host_macos.sh` prints instructions for configuring `/etc/postfix/main.cf` with SMTP-AUTH against Gmail/SES/SendGrid, but does not automate it. Skip if you don't need email notifications.
+- **Email notifications remain untested and may not work even after configuration.**
 
 - No host-side Claude Code install required. Each sandbox prompts `/login` on its own first launch and stores the resulting OAuth token inside its own state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `claude-sandbox-persistent-state-<INSTANCE>/.claude/.credentials.json` in per-instance mode). The host's `~/.claude/` is NOT mounted into the container.
 
@@ -313,7 +337,7 @@ Nothing else on the host is visible to the container.
 
 ### Adopting shared mode safely (no risk to existing instances)
 
-Opt a sandbox into shared mode by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to its `env.<INSTANCE>.sh` (the bundled `env.*.sh` files already do this). First launch on a fresh clone uses the tracked `claude-sandbox-shared/.claude/` (CLAUDE.md, settings.json, hooks, skills, caveman defaults) directly; subsequent launches reuse it. Switch back to per-instance any time by removing that line — `run_claude_docker.sh` will seed a copy of the tracked settings + hooks into the per-instance dir on first launch (`seed_settings` / `seed_hooks`).
+Opt a sandbox into shared mode by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to its `env.<INSTANCE>.sh` (the bundled `env.*.sh` files already do this). First launch on a fresh clone uses the tracked `claude-sandbox-shared/.claude/` (CLAUDE.md, settings.json, hooks, skills, **vendored caveman plugin source**, caveman defaults) directly; subsequent launches reuse it. Switch back to per-instance any time by removing that line — `run_claude_docker.sh` will seed a copy of the tracked settings + hooks into the per-instance dir on first launch (`seed_settings` / `seed_hooks`).
 
 ### Concurrency caveats (shared mode)
 
