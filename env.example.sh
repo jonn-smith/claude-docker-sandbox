@@ -80,5 +80,14 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 #
 #export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference /srv/corpus"
 
+# --shm-size override for the sandbox container. Docker's default 64 MB
+# /dev/shm is too small for Chromium/Playwright, PyTorch DataLoader
+# workers, and other multi-process consumers. Set this when those
+# workloads inside the sandbox fail with "No space left on device" on
+# /dev/shm or similar shared-memory errors. Format is Docker's: 512m,
+# 2g, 4g, etc. Unset → Docker default (64 MB).
+#
+#export CLAUDE_SANDBOX_SHM_SIZE=2g
+
 unset __ENV_SCRIPT_DIR
 

@@ -678,6 +678,15 @@ RUNTIME_FLAG=(--runtime=sysbox-runc)
 GPU_FLAGS=()
 HAVE_GPU=0
 
+# Optional --shm-size override. Docker defaults /dev/shm to 64MB, which is
+# too small for Chromium/Playwright, PyTorch DataLoader workers, and other
+# multi-process consumers. Set CLAUDE_SANDBOX_SHM_SIZE=2g (or 512m, 4g, …)
+# to bump it. Unset → don't emit the flag → Docker default.
+SHM_FLAGS=()
+if [[ -n "${CLAUDE_SANDBOX_SHM_SIZE:-}" ]]; then
+  SHM_FLAGS=(--shm-size="${CLAUDE_SANDBOX_SHM_SIZE}")
+fi
+
 if [[ "$IS_DARWIN" == "1" ]]; then
   YEL=$'\033[1;33m'; RST=$'\033[0m'
   echo "${YEL}macOS host: no sysbox-runc (using default runc), no GPU passthrough, no DinD.${RST}"
@@ -735,6 +744,7 @@ docker run --rm -it \
   "${MOUNTS[@]}" \
   --add-host=host.docker.internal:host-gateway \
   ${RUNTIME_FLAG[@]+"${RUNTIME_FLAG[@]}"} \
+  ${SHM_FLAGS[@]+"${SHM_FLAGS[@]}"} \
   ${GPU_FLAGS[@]+"${GPU_FLAGS[@]}"} \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
