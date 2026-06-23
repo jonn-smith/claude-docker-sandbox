@@ -45,6 +45,10 @@
       }
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/hooks/caveman-statusline.sh"
+  },
   "enabledPlugins": {
     "caveman@caveman": true
   },
@@ -61,8 +65,5 @@
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
   "skipAutoPermissionPrompt": true,
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/hooks/caveman-statusline.sh"
-  }
+  "agentPushNotifEnabled": true
 }

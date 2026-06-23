@@ -18,7 +18,7 @@ REPO_URL="https://github.com/broadinstitute/fiss-mcp.git"
 # Pinned release. Bump together with anything that depends on new fiss-mcp
 # features. The marker file below keys off this string, so any change here
 # triggers a full reinstall on the next setup_host.sh run.
-FISS_MCP_REF="1.0.4"
+FISS_MCP_REF="1.0.5"
 FISS_MCP_REF_COMMIT="453ac5245667d8450ef0c1b67a4dbf05725513b9"
 
 # Python 3.10+ check (fiss-mcp requires >=3.10).
