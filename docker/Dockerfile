@@ -17,22 +17,22 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils shellche
 # Clean up APT stuff:
 RUN rm -rf /var/lib/apt/lists/*
 
-# Install claude code. Pinned — bumping CLAUDE_CODE_VERSION + `make
-# rebuild` lands a newer release deterministically. Tracking "latest"
-# silently here would make every rebuild non-reproducible, and a
-# write-semantics change between unpinned builds is exactly the kind of
-# thing that produced the bind-mounted-credentials persistence bug
-# (see commit ee421d5).
-ENV CLAUDE_CODE_VERSION=2.1.165
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    && claude --version
-
 COPY --from=temurin /opt/java/openjdk /opt/java/openjdk
 
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
       sh -s -- -y --no-modify-path --default-toolchain stable
+
+# Install claude code. Pinned — bumping CLAUDE_CODE_VERSION + `make
+# rebuild` lands a newer release deterministically. Tracking "latest"
+# silently here would make every rebuild non-reproducible, and a
+# write-semantics change between unpinned builds is exactly the kind of
+# thing that produced the bind-mounted-credentials persistence bug
+# (see commit ee421d5).
+ENV CLAUDE_CODE_VERSION=2.1.200
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && claude --version
 
 # CodeGraph: pre-indexed code knowledge graph exposed as an MCP stdio server.
 # Bundle ships its own Node runtime — no compile, no extra deps. Claude Code
