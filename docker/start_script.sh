@@ -185,6 +185,7 @@ check_pin() {
 }
 # Keep in sync with claude-sandbox-shared/.claude/PLUGIN_PINS.md.
 check_pin caveman 63a91ecadbf4c4719a4602a5abb00883f9966034
+check_pin ponytail bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
 
 # Run claude:
 claude "$@"

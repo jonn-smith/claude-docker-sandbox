@@ -27,6 +27,10 @@ claude-sandbox-shared/.claude/*
 !claude-sandbox-shared/.claude/plugins/marketplaces/
 !claude-sandbox-shared/.claude/plugins/marketplaces/caveman/
 !claude-sandbox-shared/.claude/plugins/marketplaces/caveman/**
+# Vendor ponytail same way — pinned at v4.8.4 (commit bc9ee949...).
+# See PLUGIN_PINS.md for bump procedure.
+!claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/
+!claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/**
 
 
 workspace/*
