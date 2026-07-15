@@ -25,9 +25,10 @@ If the resolved SHA does NOT match the value in this file, do NOT bump — inves
 | Plugin / marketplace | mode | ref | expected commit SHA |
 |---|---|---|---|
 | [caveman](https://github.com/JuliusBrussee/caveman) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/` | `v1.8.2` | `63a91ecadbf4c4719a4602a5abb00883f9966034` |
+| [ponytail](https://github.com/DietrichGebert/ponytail) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/` | `v4.8.4` | `bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324` |
 
-The `extraKnownMarketplaces.caveman` entry in `settings.json` is kept as a
-fallback — if the vendored tree is ever absent, claude-code can still
+The `extraKnownMarketplaces.<name>` entries in `settings.json` are kept
+as fallbacks — if a vendored tree is ever absent, claude-code can still
 clone from upstream at the same pinned ref.
 
 ## Automatic drift detection

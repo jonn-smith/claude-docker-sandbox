@@ -158,8 +158,17 @@ check_pin() {
   local name="$1"
   local expected="$2"
   local repo_dir="$HOME/.claude/plugins/marketplaces/$name"
-  if [[ ! -d "$repo_dir/.git" ]]; then
+  if [[ ! -d "$repo_dir" ]]; then
     echo "pin-check ($name): marketplace not yet installed — will resolve at pinned ref on first use."
+    return 0
+  fi
+  if [[ ! -d "$repo_dir/.git" ]]; then
+    # Vendored: .git stripped at vendoring time per PLUGIN_PINS.md
+    # bump procedure. Drift is caught at commit review, not at boot.
+    # The git SHA the tree was cut from is recorded in PLUGIN_PINS.md
+    # and is the source of truth. Emit an informational line, not a
+    # scary warning.
+    echo "pin-check ($name): vendored (expected $expected — trust the commit that vendored it)"
     return 0
   fi
   local actual
@@ -185,6 +194,7 @@ check_pin() {
 }
 # Keep in sync with claude-sandbox-shared/.claude/PLUGIN_PINS.md.
 check_pin caveman 63a91ecadbf4c4719a4602a5abb00883f9966034
+check_pin ponytail bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
 
 # Run claude:
 claude "$@"

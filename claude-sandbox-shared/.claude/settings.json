@@ -51,7 +51,8 @@
     "command": "~/.claude/hooks/caveman-statusline.sh"
   },
   "enabledPlugins": {
-    "caveman@caveman": true
+    "caveman@caveman": true,
+    "ponytail@ponytail": true
   },
   "extraKnownMarketplaces": {
     "caveman": {
@@ -59,6 +60,13 @@
         "source": "github",
         "repo": "JuliusBrussee/caveman",
         "ref": "v1.8.2"
+      }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail",
+        "ref": "v4.8.4"
       }
     }
   },
