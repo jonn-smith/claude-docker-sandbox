@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DOCKER_IMAGE_VERSION=latest
+DOCKER_IMAGE_VERSION=0.0.1
+
 # Here we set our directories and credentials so we can authenticate and have
 # a proper sandbox.  It's VERY important that we don't let these agents run
 # freely around our machine.
@@ -762,5 +765,5 @@ docker run --rm -it \
   -e CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" \
   -e ANTHROPIC_TARGET_API_URL="${VERTEX_PROXY_URL_FOR_CONTAINER}" \
   -w /workspace \
-  claude-sandbox:latest /home/claude/start_script.sh "$@"
+  claude-sandbox:${DOCKER_IMAGE_VERSION} /home/claude/start_script.sh "$@"
 
