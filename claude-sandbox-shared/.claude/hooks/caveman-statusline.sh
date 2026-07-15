@@ -1,31 +1,32 @@
 #!/bin/bash
-# Wrapper for the sandbox statusline.
+# Composite statusline wrapper for the sandbox.
 #
-# Prints a compact `model · effort` segment first, then defers to caveman's
-# own badge script. Result: `claude-fable-5 · xhigh  [CAVEMAN]` on one line.
+# Renders: `model · effort  [PLUGIN_A_BADGE] [PLUGIN_B_BADGE] ...`
 #
-# Why one wrapper instead of two statusline entries: claude-code's
-# settings.json supports exactly ONE `statusLine.command`. All segments
-# have to concatenate their output through a single script.
+# claude-code's settings.json accepts exactly ONE statusLine.command, so
+# every segment concatenates through this single script. Filename kept as
+# caveman-statusline.sh for backward compatibility with the settings
+# entry — despite the name, it now composes badges from any listed
+# plugin, not just caveman.
 #
-# The caveman badge script itself lives at one of two paths inside the
-# plugin install, depending on what claude-code's plugin loader did:
+# Adding a new plugin badge: append the plugin name to STATUSLINE_PLUGINS
+# below. The wrapper discovers <name>-statusline.sh under any of the
+# canonical locations Claude Code's plugin loader may use:
+#   plugins/marketplaces/<name>/{,src/}hooks/<name>-statusline.sh
+#   plugins/cache/<name>/<name>/*/{,src/}hooks/<name>-statusline.sh
+# A missing badge is silently skipped — better no output than a hard
+# error.
 #
-#   plugins/marketplaces/caveman/hooks/caveman-statusline.sh
-#       — the raw git clone of the marketplace repo. Stable name.
-#   plugins/cache/caveman/caveman/<git-sha>/hooks/caveman-statusline.sh
-#       — the per-commit cache. SHA in the path changes on every pin bump.
-#
-# We probe both cache and marketplace, both pre-1.8 (hooks/) and 1.8+
-# (src/hooks/) layouts, and exit 0 silently if none exist — no statusline
-# is better than a hard error.
+# Order in STATUSLINE_PLUGINS controls display order left-to-right.
 
-# --- model + effort segment ------------------------------------------------
-# claude-code pipes the session JSON to statusline commands on stdin. We
-# read it once here, extract the model display name, and hand the buffered
-# copy to caveman via a here-string so both scripts see the same input.
+STATUSLINE_PLUGINS=(caveman ponytail)
+
+# --- buffer stdin ----------------------------------------------------------
+# claude-code pipes the session JSON to statusline commands on stdin. Read
+# it once here so every badge script sees the same input via here-string.
 STATUSLINE_INPUT="$(cat)"
 
+# --- model + effort segment ------------------------------------------------
 MODEL=""
 if [ -n "$STATUSLINE_INPUT" ] && command -v jq >/dev/null 2>&1; then
     # Try display_name first (human-friendly), fall back to id.
@@ -37,7 +38,7 @@ fi
 # unset, we don't invent a value — better to omit the segment than to lie.
 EFFORT="${CLAUDE_EFFORT:-}"
 
-# Dim gray so the segment sits back visually and lets caveman's orange pop.
+# Dim gray so this segment sits back visually and lets the badges pop.
 DIM=$'\033[38;5;244m'
 RST=$'\033[0m'
 
@@ -49,17 +50,23 @@ elif [ -n "$EFFORT" ]; then
     printf '%seffort:%s%s  ' "$DIM" "$EFFORT" "$RST"
 fi
 
-# --- caveman badge ---------------------------------------------------------
+# --- plugin badges ---------------------------------------------------------
 PLUGIN_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins"
 
-for candidate in \
-    "$PLUGIN_ROOT"/cache/caveman/caveman/*/src/hooks/caveman-statusline.sh \
-    "$PLUGIN_ROOT"/cache/caveman/caveman/*/hooks/caveman-statusline.sh \
-    "$PLUGIN_ROOT"/marketplaces/caveman/src/hooks/caveman-statusline.sh \
-    "$PLUGIN_ROOT"/marketplaces/caveman/hooks/caveman-statusline.sh ; do
-    if [ -x "$candidate" ]; then
-        bash "$candidate" "$@" <<<"$STATUSLINE_INPUT"
-        exit $?
-    fi
+for plugin in "${STATUSLINE_PLUGINS[@]}"; do
+    for candidate in \
+        "$PLUGIN_ROOT"/cache/"$plugin"/"$plugin"/*/src/hooks/"$plugin"-statusline.sh \
+        "$PLUGIN_ROOT"/cache/"$plugin"/"$plugin"/*/hooks/"$plugin"-statusline.sh \
+        "$PLUGIN_ROOT"/marketplaces/"$plugin"/src/hooks/"$plugin"-statusline.sh \
+        "$PLUGIN_ROOT"/marketplaces/"$plugin"/hooks/"$plugin"-statusline.sh ; do
+        # -f (regular file) not -x — some vendored trees ship without the
+        # exec bit (ponytail's tarball did), but `bash <path>` runs it
+        # regardless.
+        if [ -f "$candidate" ]; then
+            bash "$candidate" "$@" <<<"$STATUSLINE_INPUT"
+            printf ' '  # separator between plugin badges
+            break
+        fi
+    done
 done
 exit 0
