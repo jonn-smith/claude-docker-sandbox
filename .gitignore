@@ -67,3 +67,10 @@ __pycache__/
 # created fresh by setup_host.sh.
 host_fiss_mcp/venv/
 host_fiss_mcp/fiss-mcp/
+
+# Session-history snapshots produced on demand by
+# SESSION_ARCHIVE/archive_sessions.sh. The per-source subdirs hold
+# hundreds of MB of session transcripts (full command + output history
+# across all projects) — kept out of git for size and privacy. Only the
+# script + README are tracked; re-run the script to regenerate the data.
+SESSION_ARCHIVE/*/
