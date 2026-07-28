@@ -74,3 +74,7 @@ host_fiss_mcp/fiss-mcp/
 # across all projects) — kept out of git for size and privacy. Only the
 # script + README are tracked; re-run the script to regenerate the data.
 SESSION_ARCHIVE/*/
+# INDEX.md embeds first-prompt snippets from every project's sessions —
+# regenerable via index_sessions.sh, kept out of git for the same
+# size/privacy reasons as the archived data.
+SESSION_ARCHIVE/INDEX.md
