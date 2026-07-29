@@ -78,3 +78,6 @@ SESSION_ARCHIVE/*/
 # regenerable via index_sessions.sh, kept out of git for the same
 # size/privacy reasons as the archived data.
 SESSION_ARCHIVE/INDEX.md
+# CLASSIFIED.md embeds session titles + prompt snippets too — same
+# privacy reason. It's your working attribution artifact, regenerable.
+SESSION_ARCHIVE/CLASSIFIED.md
