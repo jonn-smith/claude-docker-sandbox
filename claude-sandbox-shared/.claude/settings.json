@@ -1,5 +1,4 @@
 {
-  "model": "claude-fable-5[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -70,11 +69,13 @@
       }
     }
   },
+  "cleanupPeriodDays": 36500,
   "effortLevel": "xhigh",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
-  "agentPushNotifEnabled": true,
-  "inputNeededNotifEnabled": true,
   "remoteControlAtStartup": true,
-  "skipAutoPermissionPrompt": true
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true,
+  "model": "opus[1m]"
 }
