@@ -1,7 +1,7 @@
 #!/bin/bash
 # Composite statusline wrapper for the sandbox.
 #
-# Renders: `model · effort  [PLUGIN_A_BADGE] [PLUGIN_B_BADGE] ...`
+# Renders: `model · effort  [VERTEX]  [PLUGIN_A_BADGE] [PLUGIN_B_BADGE] ...`
 #
 # claude-code's settings.json accepts exactly ONE statusLine.command, so
 # every segment concatenates through this single script. Filename kept as
@@ -48,6 +48,15 @@ elif [ -n "$MODEL" ]; then
     printf '%s%s%s  ' "$DIM" "$MODEL" "$RST"
 elif [ -n "$EFFORT" ]; then
     printf '%seffort:%s%s  ' "$DIM" "$EFFORT" "$RST"
+fi
+
+# --- backend badge ---------------------------------------------------------
+# Vertex mode routes Anthropic-shape traffic through the host vertex_proxy;
+# the launcher forwards its URL as ANTHROPIC_TARGET_API_URL (the only vertex
+# var that reaches the container — CLAUDE_CODE_USE_VERTEX is not forwarded).
+# Non-empty => on Vertex. Blue badge; absent when hitting api.anthropic.com.
+if [ -n "${ANTHROPIC_TARGET_API_URL:-}" ]; then
+    printf '\033[38;5;39m[VERTEX]\033[0m  '
 fi
 
 # --- plugin badges ---------------------------------------------------------
