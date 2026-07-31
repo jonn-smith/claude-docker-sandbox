@@ -23,8 +23,19 @@ claude-sandbox-shared/.claude/*
 # and updating PLUGIN_PINS.md. The plugins/cache/ dir stays gitignored;
 # claude-code rebuilds it from the vendored marketplaces tree on first
 # session.
+# Re-include the plugins tree, but ONLY the vendored marketplace sources.
+# `!plugins/` alone lets git descend into plugins/, but the parent
+# `.claude/*` rule is only one level deep so it never re-ignores the
+# runtime children (cache/, installed_plugins.json, known_marketplaces.json,
+# plugin-catalog-cache.json, .last_inuse_sweep, and runtime-cloned
+# marketplaces like claude-plugins-official/). So blacklist everything
+# under plugins/ and under marketplaces/, then whitelist just the two
+# vendored trees. claude-code rebuilds cache/ and the runtime clones from
+# these on first session.
 !claude-sandbox-shared/.claude/plugins/
+claude-sandbox-shared/.claude/plugins/*
 !claude-sandbox-shared/.claude/plugins/marketplaces/
+claude-sandbox-shared/.claude/plugins/marketplaces/*
 !claude-sandbox-shared/.claude/plugins/marketplaces/caveman/
 !claude-sandbox-shared/.claude/plugins/marketplaces/caveman/**
 # Vendor ponytail same way — pinned at v4.8.4 (commit bc9ee949...).
