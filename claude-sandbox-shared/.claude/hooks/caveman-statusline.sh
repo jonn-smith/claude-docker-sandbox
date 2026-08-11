@@ -145,12 +145,17 @@ fi
 # --- plugin badges ---------------------------------------------------------
 PLUGIN_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins"
 
+# Probe the VENDORED marketplace copy before the runtime cache. The cache
+# can hold an older caveman version than the pinned/vendored tree — its
+# badge script predated the savings-suffix feature, so a cache-first order
+# silently dropped the "⛏ 6M" suffix. Marketplace is the pinned source of
+# truth; prefer it.
 for plugin in "${STATUSLINE_PLUGINS[@]}"; do
     for candidate in \
-        "$PLUGIN_ROOT"/cache/"$plugin"/"$plugin"/*/src/hooks/"$plugin"-statusline.sh \
-        "$PLUGIN_ROOT"/cache/"$plugin"/"$plugin"/*/hooks/"$plugin"-statusline.sh \
         "$PLUGIN_ROOT"/marketplaces/"$plugin"/src/hooks/"$plugin"-statusline.sh \
-        "$PLUGIN_ROOT"/marketplaces/"$plugin"/hooks/"$plugin"-statusline.sh ; do
+        "$PLUGIN_ROOT"/marketplaces/"$plugin"/hooks/"$plugin"-statusline.sh \
+        "$PLUGIN_ROOT"/cache/"$plugin"/"$plugin"/*/src/hooks/"$plugin"-statusline.sh \
+        "$PLUGIN_ROOT"/cache/"$plugin"/"$plugin"/*/hooks/"$plugin"-statusline.sh ; do
         # -f (regular file) not -x — some vendored trees ship without the
         # exec bit (ponytail's tarball did), but `bash <path>` runs it
         # regardless.

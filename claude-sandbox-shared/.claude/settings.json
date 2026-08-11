@@ -1,4 +1,6 @@
 {
+  "cleanupPeriodDays": 36500,
+  "model": "opus[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -40,6 +42,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/notify-if-rate-limited.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/caveman-stats-refresh.sh"
           }
         ]
       }
@@ -69,13 +75,11 @@
       }
     }
   },
-  "cleanupPeriodDays": 36500,
   "effortLevel": "xhigh",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "model": "opus[1m]"
+  "skipAutoPermissionPrompt": true
 }
