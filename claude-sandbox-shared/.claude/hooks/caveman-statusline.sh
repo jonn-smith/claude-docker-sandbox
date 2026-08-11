@@ -1,7 +1,8 @@
 #!/bin/bash
 # Composite statusline wrapper for the sandbox.
 #
-# Renders: `model · effort  [VERTEX]  [PLUGIN_A_BADGE] [PLUGIN_B_BADGE] ...`
+# Renders: `model · effort  [BACKEND]  [PLUGIN_A_BADGE] [PLUGIN_B_BADGE] ...`
+# where [BACKEND] is [VERTEX] or [CLAUDE.AI] (see backend-badge section).
 #
 # claude-code's settings.json accepts exactly ONE statusLine.command, so
 # every segment concatenates through this single script. Filename kept as
@@ -51,12 +52,39 @@ elif [ -n "$EFFORT" ]; then
 fi
 
 # --- backend badge ---------------------------------------------------------
-# Vertex mode routes Anthropic-shape traffic through the host vertex_proxy;
-# the launcher forwards its URL as ANTHROPIC_TARGET_API_URL (the only vertex
-# var that reaches the container — CLAUDE_CODE_USE_VERTEX is not forwarded).
-# Non-empty => on Vertex. Blue badge; absent when hitting api.anthropic.com.
-if [ -n "${ANTHROPIC_TARGET_API_URL:-}" ]; then
-    printf '\033[38;5;39m[VERTEX]\033[0m  '
+# Which backend is ACTIVE — not merely available. The launcher forwards
+# ANTHROPIC_TARGET_API_URL whenever it spawned the host vertex_proxy, but
+# that only means Vertex is *reachable*. A claude.ai OAuth login (e.g.
+# `/login` with an enterprise account) overrides it: Claude Code then
+# talks to claude.ai and ignores the proxy. CLAUDE_CODE_USE_VERTEX is read
+# host-side only and never reaches the container, so it can't be the signal.
+#
+# Discriminator:
+#   OAuth login active            -> [CLAUDE.AI]  (overrides proxy)
+#   else, proxy URL set           -> [VERTEX]
+#   else                          -> no badge (plain api.anthropic.com / unset)
+#
+# OAuth-active = a non-empty ~/.claude/.credentials.json AND oauthAccount
+# set in ~/.claude.json. Both are local file reads — no network.
+# .credentials.json lives INSIDE the config dir; .claude.json sits one
+# level up in $HOME (not inside .claude/).
+CC_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CC_JSON="$HOME/.claude.json"
+oauth_active=0
+if [ -s "$CC_DIR/.credentials.json" ]; then
+    if command -v jq >/dev/null 2>&1; then
+        [ "$(jq -r '.oauthAccount != null' "$CC_JSON" 2>/dev/null)" = "true" ] \
+            && oauth_active=1
+    else
+        # jq absent: credentials file alone is a good-enough signal.
+        oauth_active=1
+    fi
+fi
+
+if [ "$oauth_active" = 1 ]; then
+    printf '\033[38;5;208m[CLAUDE.AI]\033[0m  '      # orange
+elif [ -n "${ANTHROPIC_TARGET_API_URL:-}" ]; then
+    printf '\033[38;5;39m[VERTEX]\033[0m  '          # blue
 fi
 
 # --- plugin badges ---------------------------------------------------------
