@@ -81,10 +81,12 @@ if [ -s "$CC_DIR/.credentials.json" ]; then
     fi
 fi
 
+# Single trailing space to match the one-space separator between plugin
+# badges below (two here left a visible gap before the first plugin).
 if [ "$oauth_active" = 1 ]; then
-    printf '\033[38;5;208m[CLAUDE.AI]\033[0m  '      # orange
+    printf '\033[38;5;208m[CLAUDE.AI]\033[0m '       # orange
 elif [ -n "${ANTHROPIC_TARGET_API_URL:-}" ]; then
-    printf '\033[38;5;39m[VERTEX]\033[0m  '          # blue
+    printf '\033[38;5;39m[VERTEX]\033[0m '           # blue
 fi
 
 # --- plugin badges ---------------------------------------------------------
