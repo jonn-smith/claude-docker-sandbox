@@ -20,7 +20,10 @@
 #
 # Order in STATUSLINE_PLUGINS controls display order left-to-right.
 
-STATUSLINE_PLUGINS=(caveman ponytail)
+# caveman is rendered by a dedicated block below (so its savings number
+# lands INSIDE the brackets); other plugin badges are delegated to their
+# own <name>-statusline.sh via the loop.
+STATUSLINE_PLUGINS=(ponytail)
 
 # --- buffer stdin ----------------------------------------------------------
 # claude-code pipes the session JSON to statusline commands on stdin. Read
@@ -139,6 +142,43 @@ if [ "${HEADROOM:-0}" = "1" ]; then
         printf '\033[38;5;42m[HR %s]\033[0m ' "$hr_human"   # green
     else
         printf '\033[38;5;42m[HR]\033[0m '
+    fi
+fi
+
+# --- caveman badge (rendered here, savings INSIDE the brackets) ------------
+# caveman's own badge script prints "[CAVEMAN] ⛏ 6M" — savings OUTSIDE the
+# brackets, and it's the pinned/vendored file we don't edit. Render the
+# badge ourselves: read the mode flag + the pre-rendered savings suffix
+# (written by caveman-stats.js via the Stop hook) and emit
+# "[CAVEMAN ⛏ 6M]" / "[CAVEMAN:ULTRA ⛏ 6M]". Same hardening as the plugin
+# script: refuse symlinks, cap the read, whitelist the mode.
+cm_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+cm_flag="$cm_dir/.caveman-active"
+if [ -f "$cm_flag" ] && [ ! -L "$cm_flag" ]; then
+    cm_mode=$(head -c 64 "$cm_flag" 2>/dev/null | tr -d '\n\r' \
+              | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+    case "$cm_mode" in
+        off|lite|full|ultra|wenyan-lite|wenyan|wenyan-full|wenyan-ultra|commit|review|compress) ;;
+        *) cm_mode="" ;;
+    esac
+    if [ -n "$cm_mode" ]; then
+        if [ "$cm_mode" = "full" ]; then
+            cm_label="CAVEMAN"
+        else
+            cm_label="CAVEMAN:$(printf '%s' "$cm_mode" | tr '[:lower:]' '[:upper:]')"
+        fi
+        cm_sav=""
+        if [ "${CAVEMAN_STATUSLINE_SAVINGS:-1}" != "0" ]; then
+            cm_sfile="$cm_dir/.caveman-statusline-suffix"
+            if [ -f "$cm_sfile" ] && [ ! -L "$cm_sfile" ]; then
+                cm_sav=$(head -c 64 "$cm_sfile" 2>/dev/null | tr -d '\000-\037')
+            fi
+        fi
+        if [ -n "$cm_sav" ]; then
+            printf '\033[38;5;172m[%s %s]\033[0m ' "$cm_label" "$cm_sav"
+        else
+            printf '\033[38;5;172m[%s]\033[0m ' "$cm_label"
+        fi
     fi
 fi
 
