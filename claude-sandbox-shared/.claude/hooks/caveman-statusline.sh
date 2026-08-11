@@ -89,6 +89,59 @@ elif [ -n "${ANTHROPIC_TARGET_API_URL:-}" ]; then
     printf '\033[38;5;39m[VERTEX]\033[0m '           # blue
 fi
 
+# --- headroom badge --------------------------------------------------------
+# When the headroom proxy is on (HEADROOM=1), show a green badge with the
+# lifetime tokens it has saved: e.g. [HR 612K]. The count comes from
+# headroom's /stats (.savings.total_tokens) and refreshes after each
+# response (this hook re-runs then).
+#
+# The statusline can render many times between responses, so a naive curl
+# per render would hammer the proxy. Cache the number to a tmp file with a
+# short TTL and only re-fetch when stale. If headroom is unreachable, fall
+# back to the last cached value, else a bare [HR] so the badge never blanks
+# mid-session on one slow poll.
+if [ "${HEADROOM:-0}" = "1" ]; then
+    hr_port="${HEADROOM_PORT:-8787}"
+    hr_cache="${TMPDIR:-/tmp}/hr-statusline-saved"
+    hr_ttl=2
+    hr_saved=""
+
+    # Use cache if fresh (mtime within TTL). stat -c works on the Linux
+    # container; guard it so a missing stat never aborts the statusline.
+    if [ -f "$hr_cache" ]; then
+        now=$(date +%s 2>/dev/null || echo 0)
+        mtime=$(stat -c %Y "$hr_cache" 2>/dev/null || echo 0)
+        if [ "$now" -gt 0 ] && [ $((now - mtime)) -lt "$hr_ttl" ]; then
+            hr_saved=$(cat "$hr_cache" 2>/dev/null)
+        fi
+    fi
+
+    if [ -z "$hr_saved" ] && command -v jq >/dev/null 2>&1; then
+        hr_saved=$(curl -sf --max-time 0.5 "http://127.0.0.1:${hr_port}/stats" 2>/dev/null \
+                   | jq -r '.savings.total_tokens // empty' 2>/dev/null)
+        [ -n "$hr_saved" ] && printf '%s' "$hr_saved" > "$hr_cache" 2>/dev/null
+    fi
+    # Last-resort fallback to a stale cache so the number doesn't vanish.
+    [ -z "$hr_saved" ] && [ -f "$hr_cache" ] && hr_saved=$(cat "$hr_cache" 2>/dev/null)
+
+    # Human-readable: 612434 -> 612K, 1500000 -> 1.5M.
+    hr_human=""
+    if [ -n "$hr_saved" ] && [ "$hr_saved" -eq "$hr_saved" ] 2>/dev/null; then
+        hr_human=$(awk -v n="$hr_saved" 'BEGIN{
+            if (n>=1e9) printf "%.1fB", n/1e9;
+            else if (n>=1e6) printf "%.1fM", n/1e6;
+            else if (n>=1e3) printf "%dK", int(n/1e3);
+            else printf "%d", n
+        }' 2>/dev/null)
+    fi
+
+    if [ -n "$hr_human" ]; then
+        printf '\033[38;5;42m[HR %s]\033[0m ' "$hr_human"   # green
+    else
+        printf '\033[38;5;42m[HR]\033[0m '
+    fi
+fi
+
 # --- plugin badges ---------------------------------------------------------
 PLUGIN_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins"
 
