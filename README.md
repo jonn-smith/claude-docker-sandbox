@@ -18,6 +18,7 @@ Beyond the normal setup and build features, this sandbox has:
 - A built-in [CodeGraph](https://github.com/colbymchenry/codegraph) MCP server (stdio, in-container) that gives the agent a pre-indexed tree-sitter code graph — `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, etc. — instead of grep+Read chains. Maintainer benchmarks claim ~58% fewer tool calls and ~16% cheaper turns (directional, single-author). Index is auto-built on first session per workdir via a SessionStart hook and kept current by an in-process file watcher. Disable per-launch with `CODEGRAPH=0`.
 - The [caveman](https://github.com/JuliusBrussee/caveman) compression plugin **vendored at v1.8.2** under `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/`. No network round-trip at first session — fresh clones get the plugin source directly. Enabled by default at intensity `full` (tracked via `.caveman-active`), with the `[CAVEMAN]` chip wired into the statusline. Override per session with `/caveman lite|full|ultra` or `stop caveman`. Bump procedure in `claude-sandbox-shared/.claude/PLUGIN_PINS.md`.
 - An interactive launcher (`start_sandbox.sh`) that lets you pick instance, resume an existing Claude session, and choose a workdir from an fzf menu, instead of hand-sourcing `env.<INSTANCE>.sh` and running `run_claude_docker.sh` directly.
+- A composite statusline showing model · effort, the active backend (`[CLAUDE.AI]` / `[VERTEX]`), live headroom savings (`[HR 2.0M]`, measured), and per-session caveman savings (`[CAVEMAN ⛏ 2.1M]`, estimated) plus plugin chips. See [Statusline badges](#statusline-badges).
 
 I've tried to include everything I need for my typical work.
 
@@ -171,6 +172,52 @@ How it works: when `HEADROOM=1`, `start_script.sh` launches `headroom proxy` on 
 Trust model: the proxy reads every byte of every request — that's how compression works. It runs entirely inside the same container as `claude`, so it sees the same OAuth token Claude already has and no wider trust boundary is opened. Code is Apache-2.0; pin the version in `Dockerfile`. If you don't want a third-party dep in the request path, leave `HEADROOM` unset and traffic goes direct.
 
 Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh` to make it sticky for that sandbox.
+
+## Statusline badges
+
+The statusline is a single wrapper, `claude-sandbox-shared/.claude/hooks/caveman-statusline.sh`, that composes several segments into one line (Claude Code allows only one `statusLine.command`). It re-runs after each response, so the dynamic numbers stay current. A typical line:
+
+```
+opus · xhigh  [CLAUDE.AI] [HR 2.0M] [CAVEMAN ⛏ 2.1M] [PONYTAIL]
+```
+
+Left to right:
+
+| Segment | Meaning |
+|---|---|
+| `opus · xhigh` | Model display name · reasoning effort (`CLAUDE_EFFORT`). Dim gray. |
+| `[CLAUDE.AI]` / `[VERTEX]` | **Active** backend, not merely available. See below. |
+| `[HR <n>]` | Headroom is on; `<n>` = tokens it has saved (see below). Absent when `HEADROOM=0`. |
+| `[CAVEMAN ⛏ <n>]` | Caveman plugin active; `<n>` = estimated tokens saved **this session**. |
+| `[PONYTAIL]` | Ponytail plugin active. |
+
+### Backend badge — `[CLAUDE.AI]` vs `[VERTEX]`
+
+Shows which backend is *actually in use*, not just which is reachable. The launcher forwards `ANTHROPIC_TARGET_API_URL` whenever it spawned the host vertex_proxy, but a claude.ai OAuth login (`/login` with an enterprise account) overrides it — Claude Code then talks to claude.ai and ignores the proxy. `CLAUDE_CODE_USE_VERTEX` is read host-side only and never reaches the container, so it can't be the signal. The discriminator:
+
+- **OAuth login active** (`~/.claude/.credentials.json` present + `oauthAccount` in `~/.claude.json`) → `[CLAUDE.AI]` (orange). Overrides the proxy.
+- else **proxy URL set** (`ANTHROPIC_TARGET_API_URL`) → `[VERTEX]` (blue).
+- else → no badge (plain `api.anthropic.com`).
+
+### `[HR <n>]` — headroom savings (measured)
+
+When `HEADROOM=1`, this shows the lifetime tokens headroom has actually removed, human-readable (`2.0M`, `674K`). This is a **real measurement**: headroom is a proxy every request passes through, so it counts tokens before vs after compression (`.savings.total_tokens` from `http://127.0.0.1:$HEADROOM_PORT/stats`). The wrapper caches the number for 2s so frequent renders don't hammer the proxy; if a poll fails it falls back to the last value, or a bare `[HR]` if there's no cache yet.
+
+### `[CAVEMAN ⛏ <n>]` — caveman savings (per-session estimate)
+
+`<n>` is the estimated output tokens caveman's terse style saved **in the current session**, refreshed after each response by the `caveman-stats-refresh.sh` Stop hook.
+
+This is an **estimate, not a measurement**, and the distinction matters:
+
+- Headroom is a proxy — you can measure exactly what it stripped.
+- Caveman changes the model's *output* style. To measure its savings you'd need the un-caveman'd version of the same turns, which is never generated. For interactive sessions a true counterfactual is impossible (your next prompt depends on the previous answer, so a non-caveman replay diverges after turn one).
+- So the number is modeled: `sum(this session's assistant output_tokens) × 0.65`, where `0.65` is caveman's benchmarked mean savings for `full` mode (`COMPRESSION['full']` in `caveman-stats.js`). Other modes have no benchmarked ratio, so no number is shown for them.
+
+Treat `[HR]` as "tokens actually not sent" and `[CAVEMAN ⛏]` as "roughly what a terse style likely saved this session, per a fixed benchmark ratio." Opt out of the caveman number with `CAVEMAN_STATUSLINE_SAVINGS=0`.
+
+### Adding a plugin badge
+
+Append the plugin name to `STATUSLINE_PLUGINS=(ponytail)` in the wrapper. It probes the vendored marketplace copy (then the runtime cache) for `<name>-statusline.sh` and runs it. Caveman is rendered inline by the wrapper (not via the loop) so its savings number lands inside the brackets.
 
 ## CodeGraph MCP (in-container, stdio)
 
