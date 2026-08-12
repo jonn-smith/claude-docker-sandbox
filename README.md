@@ -17,6 +17,9 @@ Beyond the normal setup and build features, this sandbox has:
 - A built-in [fiss-mcp](https://github.com/broadinstitute/fiss-mcp) server for interacting with Terra. The server runs on the **host**, not inside the container, so the sandbox has no `gcloud` / `gsutil` / `google-cloud-*` libs and no `~/.config/gcloud` mount — the only path from inside the sandbox to Terra/GCP is the MCP tools the server exposes. Read-only by default; opt-in write mode via `FISS_MCP_ALLOW_WRITES=1`, which prints a loud red ASCII-art banner on the host **and** inside the container so it is impossible to miss (banner is pre-rendered, no `figlet` dependency).
 - A built-in [CodeGraph](https://github.com/colbymchenry/codegraph) MCP server (stdio, in-container) that gives the agent a pre-indexed tree-sitter code graph — `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, etc. — instead of grep+Read chains. Maintainer benchmarks claim ~58% fewer tool calls and ~16% cheaper turns (directional, single-author). Index is auto-built on first session per workdir via a SessionStart hook and kept current by an in-process file watcher. Disable per-launch with `CODEGRAPH=0`.
 - The [caveman](https://github.com/JuliusBrussee/caveman) compression plugin **vendored at v1.8.2** under `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/`. No network round-trip at first session — fresh clones get the plugin source directly. Enabled by default at intensity `full` (tracked via `.caveman-active`), with the `[CAVEMAN]` chip wired into the statusline. Override per session with `/caveman lite|full|ultra` or `stop caveman`. Bump procedure in `claude-sandbox-shared/.claude/PLUGIN_PINS.md`.
+- The [ponytail](https://github.com/DietrichGebert/ponytail) "lazy senior dev" plugin **vendored at v4.8.4** under `claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/` — pushes the agent toward the smallest solution that works (YAGNI, stdlib first). Same vendoring model as caveman (no first-session network fetch), enabled by default, `[PONYTAIL]` chip in the statusline. Complements caveman: caveman shapes prose terseness, ponytail shapes code minimalism.
+- Optional read-only reference mounts: point `CLAUDE_SANDBOX_RO_MOUNTS` at host directories and they appear under `/read-only-reference/<name>` inside the container, enforced read-only at the mount layer (`EROFS`, un-remountable without `CAP_SYS_ADMIN`). See [Read-only reference mounts](#read-only-reference-mounts).
+- Optional `--shm-size` override via `CLAUDE_SANDBOX_SHM_SIZE` for workloads that need more than Docker's default 64 MB `/dev/shm` (Chromium/Playwright, PyTorch DataLoader). See [Shared memory](#shared-memory---shm-size).
 - An interactive launcher (`start_sandbox.sh`) that lets you pick instance, resume an existing Claude session, and choose a workdir from an fzf menu, instead of hand-sourcing `env.<INSTANCE>.sh` and running `run_claude_docker.sh` directly.
 - A composite statusline showing model · effort, the active backend (`[CLAUDE.AI]` / `[VERTEX]`), live headroom savings (`[HR 2.0M]`, measured), and per-session caveman savings (`[CAVEMAN ⛏ 2.1M]`, estimated) plus plugin chips. See [Statusline badges](#statusline-badges).
 
@@ -419,6 +422,28 @@ Each accepted mount prints `ro-mount: <host> -> /read-only-reference/<name>` at 
 **Enforcement**: the `:ro` flag sets `MS_RDONLY` on the mount in the container's mount namespace. Every write attempt (`open(O_WRONLY)`, `unlink`, `rename` into the tree) returns `EROFS` at the syscall layer — file permissions and `sudo` don't help because the restriction is at the mount, not the inode. The sandbox does not run `--privileged` and does not grant `CAP_SYS_ADMIN`, so a `mount -o remount,rw` from inside also fails with `EPERM`. Host-side edits to the directory are visible to the container immediately (bind mount shares inodes); that's the operator's intentional channel for updating reference material.
 
 The interactive launcher (`start_sandbox.sh`) shows a one-line `RO mounts` summary in each area's preview pane — count + first three basenames.
+
+## Shared memory (`--shm-size`)
+
+Docker's default `/dev/shm` is 64 MB, which is too small for Chromium/Playwright, PyTorch DataLoader workers, and other multi-process shared-memory consumers — they fail with `No space left on device` on `/dev/shm`. Set `CLAUDE_SANDBOX_SHM_SIZE` in your `env.<INSTANCE>.sh` to raise it:
+
+```bash
+export CLAUDE_SANDBOX_SHM_SIZE=2g   # Docker size syntax: 512m, 2g, 4g, …
+```
+
+The launcher passes it through as `docker run --shm-size`. Unset → Docker's 64 MB default (the flag is omitted entirely).
+
+## Email notifications
+
+A hook (`notify-if-long.sh`) emails you when a prompt takes longer than a threshold (default 120 s) and when a session ends. Configure in your `env.<INSTANCE>.sh`:
+
+```bash
+export CLAUDE_NOTIFY_EMAIL=you@example.com          # recipient; unset/empty disables
+export CLAUDE_NOTIFY_FROM=claude-sandbox            # From header (optional)
+export CLAUDE_NOTIFY_HOSTNAME=$(hostname -f)        # Message-ID host (optional)
+```
+
+Leave `CLAUDE_NOTIFY_EMAIL` unset to disable entirely. Requires a working outbound mail path on the host — automatic on Linux via `setup_host.sh` (postfix + mynetworks), manual on macOS (see the macOS prerequisites). Email delivery is best-effort and, per the prerequisites note, may not work even after configuration.
 
 ## Persistence
 
