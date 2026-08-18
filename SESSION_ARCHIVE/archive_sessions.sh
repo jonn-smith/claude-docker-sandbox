@@ -3,9 +3,8 @@
 # instance's live state dir into SESSION_ARCHIVE/, on demand.
 #
 # Sources scanned (relative to the repo root):
-#   claude-sandbox-persistent-state-<INSTANCE>/.claude/  — per-instance state
-#   claude-sandbox-shared/.claude/                       — shared-mode state
-#                                                          (USE_SHARED=1)
+#   persistent-states/<INSTANCE>/.claude/  — per-instance state
+#   claude-sandbox-shared/.claude/         — shared-mode state (USE_SHARED=1)
 #
 # For each source we copy:
 #   .claude/projects/    session transcripts (<uuid>.jsonl) + their sidecar
@@ -58,10 +57,10 @@ archive_one() {
 
 echo "Archiving session history into ${ARCHIVE_DIR#$REPO_ROOT/}/ ..."
 
-# Per-instance state dirs.
-for d in "$REPO_ROOT"/claude-sandbox-persistent-state-*; do
+# Per-instance state dirs (persistent-states/<INSTANCE>/).
+for d in "$REPO_ROOT"/persistent-states/*; do
     [ -d "$d" ] || continue
-    archive_one "$d/.claude" "${d##*-state-}"
+    archive_one "$d/.claude" "$(basename "$d")"
 done
 
 # Shared-mode state (one dir, all shared instances write here).

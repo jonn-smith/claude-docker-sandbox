@@ -193,6 +193,6 @@ echo
 echo "Next steps:"
 echo "  1. Make sure Docker Desktop / OrbStack is running."
 echo "  2. cd docker && make             # build the sandbox image"
-echo "  3. source env.example.sh"
+echo "  3. source envs/env.example.sh"
 echo "  4. ./run_claude_docker.sh        # /login prompts inside the container"
 echo

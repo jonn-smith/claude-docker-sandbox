@@ -23,7 +23,7 @@ SESSION_ARCHIVE/
 ```
 
 `<source>` is an instance name (`B`, `GATK`, `WHB`, `main`, …) from a
-per-instance state dir `claude-sandbox-persistent-state-<INSTANCE>`, or
+per-instance state dir `persistent-states/<INSTANCE>`, or
 `shared` from `claude-sandbox-shared` — the one state dir all
 `CLAUDE_SANDBOX_USE_SHARED=1` instances write into. Shared-mode
 transcripts can't be attributed back to a single instance: every shared
@@ -46,7 +46,7 @@ pile of sessions apart into projects.
 bash SESSION_ARCHIVE/archive_sessions.sh
 ```
 
-Auto-discovers every `claude-sandbox-persistent-state-*` dir plus
+Auto-discovers every `persistent-states/*` dir plus
 `claude-sandbox-shared`, copies each source's `projects/` transcripts and
 `history.jsonl` into `SESSION_ARCHIVE/<source>/`, prints a per-source
 count.

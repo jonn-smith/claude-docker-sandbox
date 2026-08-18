@@ -163,7 +163,7 @@ elif first_user:
 PY
 }
 
-# Read env.<INSTANCE>.sh flag state without leaking vars into caller.
+# Read envs/env.<INSTANCE>.sh flag state without leaking vars into caller.
 # Prints five pipe-separated fields:
 #   <projects_dir>|<headroom>|<fiss_writes>|<vertex>|<ro_mounts>
 # Each flag is "1" if enabled, "0" if not. projects_dir is the resolved value.
@@ -253,16 +253,16 @@ sb_write_session_workdir() {
     printf '%s\n' "$workdir" > "$sidecar"
 }
 
-# Parse all env.*.sh files for `export CLAUDE_SANDBOX_PROJECTS_DIR=...` lines
-# (active OR commented) and emit the resolved paths, one per line.
+# Parse all envs/env.*.sh files for `export CLAUDE_SANDBOX_PROJECTS_DIR=...`
+# lines (active OR commented) and emit the resolved paths, one per line.
 #
-# Substitutes ${__ENV_SCRIPT_DIR} → the script dir argument so paths under
-# the repo expand properly. Skips env.example.sh.
+# Substitutes ${__ENV_SCRIPT_DIR} → the script dir argument (repo root) so
+# paths under the repo expand properly. Skips env.example.sh.
 sb_collect_env_workdirs() {
     local script_dir=$1
     shopt -s nullglob
     local f
-    for f in "$script_dir"/env.*.sh; do
+    for f in "$script_dir"/envs/env.*.sh; do
         local base name
         base=$(basename "$f" .sh)
         name=${base#env.}
