@@ -489,6 +489,27 @@ if [[ "$FISS_MCP_ENABLED" == "1" ]]; then
     exit 1
   fi
 
+  # Data-bridge preflight (issue #12). fiss-mcp's download_gcs_file writes
+  # host-side into $CLAUDE_SANDBOX_PROJECTS_DIR/fiss_downloads, which the
+  # container reads at /workspace/fiss_downloads. This launcher runs as the
+  # SAME user fiss-mcp will run as (nohup inherits it), so a write-probe
+  # here is authoritative: if we can't create + write the dir, neither can
+  # fiss-mcp, and the bridge would fail with a confusing MCP-side error
+  # later. Warn loudly but don't abort — the session may not need downloads.
+  FISS_BRIDGE_HOST="${CLAUDE_SANDBOX_PROJECTS_DIR}/fiss_downloads"
+  if mkdir -p "$FISS_BRIDGE_HOST" 2>/dev/null \
+     && probe="$(mktemp "${FISS_BRIDGE_HOST}/.write-probe.XXXXXX" 2>/dev/null)"; then
+    rm -f "$probe"
+    echo "fiss-mcp: data bridge writable at ${FISS_BRIDGE_HOST}"
+  else
+    YEL=$'\033[1;33m'; RST=$'\033[0m'
+    echo "${YEL}fiss-mcp: WARNING — cannot write the data bridge dir:${RST}" >&2
+    echo "${YEL}          ${FISS_BRIDGE_HOST}${RST}" >&2
+    echo "${YEL}          download_gcs_file will fail host-side. Fix perms on${RST}" >&2
+    echo "${YEL}          CLAUDE_SANDBOX_PROJECTS_DIR (must be writable by $(id -un)),${RST}" >&2
+    echo "${YEL}          or use read_gcs_object for small inline reads only.${RST}" >&2
+  fi
+
   # Per-instance port so concurrent sandboxes don't collide. Hash the
   # instance name into 39000-39999. Override with FISS_MCP_PORT.
   PORT_OFFSET=$(printf '%s' "${CLAUDE_SANDBOX_INSTANCE}" | cksum | awk '{print $1 % 1000}')
@@ -762,6 +783,9 @@ docker run --rm -it \
   -e FISS_MCP="${FISS_MCP_ENABLED}" \
   -e FISS_MCP_ALLOW_WRITES="${FISS_MCP_ALLOW_WRITES:-0}" \
   -e FISS_MCP_URL="${FISS_MCP_URL_FOR_CONTAINER}" \
+  -e HOST_WORKSPACE_DIR="${CLAUDE_SANDBOX_PROJECTS_DIR}" \
+  -e FISS_DOWNLOADS_HOST="${CLAUDE_SANDBOX_PROJECTS_DIR}/fiss_downloads" \
+  -e FISS_DOWNLOADS="/workspace/fiss_downloads" \
   -e CODEGRAPH="${CODEGRAPH:-1}" \
   -e ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
   -e CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" \

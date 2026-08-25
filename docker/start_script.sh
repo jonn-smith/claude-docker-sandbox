@@ -86,6 +86,17 @@ if [[ "${FISS_MCP:-1}" == "1" ]]; then
           url: $url
         }' "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" && cat "${CLAUDE_JSON}.tmp" > "$CLAUDE_JSON" && rm "${CLAUDE_JSON}.tmp"
 
+    # fiss-mcp data bridge (issue #12). fiss-mcp runs on the HOST, so its
+    # download_gcs_file writes to a host absolute path — invisible to this
+    # shell unless it lands under a bind mount. /workspace is a rw bind of
+    # the host's CLAUDE_SANDBOX_PROJECTS_DIR, so create a well-known subdir
+    # here for GCS pulls. The agent passes $FISS_DOWNLOADS_HOST (the host
+    # side) to download_gcs_file and reads results from $FISS_DOWNLOADS
+    # (this path). mkdir from inside the container so it's owned by the
+    # runtime user and writable by the host process (same UID).
+    mkdir -p "${FISS_DOWNLOADS:-/workspace/fiss_downloads}"
+    echo "fiss-mcp: data bridge at ${FISS_DOWNLOADS:-/workspace/fiss_downloads} (host: ${FISS_DOWNLOADS_HOST:-?})"
+
     if [[ "${FISS_MCP_ALLOW_WRITES:-0}" == "1" ]]; then
       # Second banner inside the container so the warning shows up even when
       # the host launcher's output has scrolled off, or when somebody execs
