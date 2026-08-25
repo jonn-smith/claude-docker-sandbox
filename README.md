@@ -52,7 +52,7 @@ source envs/env.example.sh
 
 First launch in any sandbox prompts `/login` inside the container. The resulting OAuth token persists into that sandbox's state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `persistent-states/<INSTANCE>/.claude/.credentials.json` in per-instance mode), so subsequent launches of the same sandbox skip the login. No host-side Claude Code install is required, and credentials are not shared with the host's `~/.claude/`.
 
-### Interactive launcher (alternative to step 4)
+### Interactive launcher (alternative to step 3)
 
 `start_sandbox.sh` opens an fzf menu: pick instance, optionally resume an existing Claude session, pick a workdir, launch. It seeds workdir candidates from any `envs/env.*.sh` plus every workdir you've previously picked (master registry at `workdirs.txt`). Sessions are annotated with their host workdir in the picker so you can tell two `main` sessions apart by what they were operating on.
 
