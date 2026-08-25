@@ -52,6 +52,30 @@ If a task ends and the user is not online, do not idle. Update task
 status, commit work in progress on a branch, write a brief status note
 to a file the operator will find on return, and exit cleanly.
 
+# Getting GCS files from fiss-mcp into your shell
+
+The fiss-mcp server runs on the HOST, not in this container. Its
+`download_gcs_file` writes to a HOST absolute path, and its
+`read_gcs_object` returns bytes inline but the session dies on payloads
+more than a few MB. So there is a bridge, exposed via env vars:
+
+- `$FISS_DOWNLOADS_HOST` — a host directory (the host side of a bind
+  mount). Pass paths UNDER this to `download_gcs_file`'s `local_path`.
+- `$FISS_DOWNLOADS` — the SAME directory as this container sees it
+  (`/workspace/fiss_downloads`). Read your downloaded files here.
+
+To pull a file:
+
+    download_gcs_file(gcs_uri="gs://bucket/big.bam",
+                      local_path="$FISS_DOWNLOADS_HOST/big.bam")
+    # then in the shell:  samtools view $FISS_DOWNLOADS/big.bam
+
+Use this for anything over ~1 MB. Only use `read_gcs_object` for small
+inline peeks (headers, a few KB) — large inline reads expire the
+fiss-mcp session. The container runs as the same UID as the host
+process, so ownership just works. These vars are set only when
+`FISS_MCP=1`; if they're unset, the bridge isn't active.
+
 # Background monitoring output
 
 When you stream events from a background process — Monitor tool watches,

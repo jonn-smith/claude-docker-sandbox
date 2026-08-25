@@ -278,6 +278,22 @@ FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh    # on, WRITE MODE (loud banner)
 
 Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` / `FISS_MCP_PORT` in `envs/env.<INSTANCE>.sh`.
 
+### Data bridge — getting GCS files into the shell
+
+Because fiss-mcp is a host process, its `download_gcs_file` writes to a **host** path, and its inline `read_gcs_object` expires the session on payloads more than a few MB. Neither reaches the agent's shell on its own. The bridge reuses the existing `/workspace` mount: `/workspace` is a read-write bind of the host's `CLAUDE_SANDBOX_PROJECTS_DIR`, and the container runs as the host UID, so a file the host process writes there is immediately readable in the shell with correct ownership.
+
+When `FISS_MCP=1`, `start_script.sh` creates `/workspace/fiss_downloads/` and the launcher exports the mapping into the container:
+
+| Var | Value | Use |
+|---|---|---|
+| `FISS_DOWNLOADS_HOST` | `$CLAUDE_SANDBOX_PROJECTS_DIR/fiss_downloads` | pass to `download_gcs_file`'s `local_path` |
+| `FISS_DOWNLOADS` | `/workspace/fiss_downloads` | read the results here in the shell |
+| `HOST_WORKSPACE_DIR` | `$CLAUDE_SANDBOX_PROJECTS_DIR` | host side of `/workspace`, for other host-path needs |
+
+The agent-facing usage note lives in `claude-sandbox-shared/.claude/CLAUDE.md`. The download dir lives inside each workspace's own project tree (keyed off that env's `CLAUDE_SANDBOX_PROJECTS_DIR`), so pulled files stay with the project and don't cross between instances. It accumulates — clean `fiss_downloads/` when done.
+
+This bridge does **not** put GCP credentials in the container; downloads still go through the read-only MCP tool. The isolation guarantee above is unchanged: there is still no shell-level auth to GCS. (Streaming/region-fetch of a remote object with the agent's *own* tools — e.g. `samtools view gs://…` without a full download — would require a credential in the container and is intentionally not provided.)
+
 ## Vertex AI mode (Google Cloud auth)
 
 The sandbox can route `claude` traffic through [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude) instead of the default Anthropic API. Same security pattern as fiss-mcp: the gcloud-shaped pieces (access-token mint, GCP service-account or ADC creds) stay on the **host** — the container has no `gcloud`, no `google-cloud-*` libs, and no `~/.config/gcloud` mount. A small host-side script (`vertex_proxy.py`) accepts Anthropic-shape POST bodies, strips the incoming Authorization header, signs with a fresh `gcloud auth print-access-token`, and forwards to Vertex.
