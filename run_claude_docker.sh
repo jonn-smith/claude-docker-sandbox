@@ -13,14 +13,14 @@ DOCKER_IMAGE_VERSION=0.0.1
 if [[ -z "${CLAUDE_SANDBOX_PROJECTS_DIR:-}" ]] || [[ ! -d "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]]; then
     echo "CRITICAL ERROR: CLAUDE_SANDBOX_PROJECTS_DIR is not set, is empty, or does not exist." >&2
     echo "                You must set this env var before starting the docker image." >&2
-    echo "                Try: source env.example.sh   (or your env.<INSTANCE>.sh)" >&2
+    echo "                Try: source envs/env.example.sh  (or your envs/env.<INSTANCE>.sh)" >&2
     exit 1
 fi
 
 if [[ -z "${CLAUDE_SANDBOX_CONTEXT_DIR:-}" ]] || [[ ! -d "${CLAUDE_SANDBOX_CONTEXT_DIR}" ]]; then
     echo "CRITICAL ERROR: CLAUDE_SANDBOX_CONTEXT_DIR is not set, is empty, or does not exist." >&2
     echo "                You must set this env var before starting the docker image." >&2
-    echo "                Try: source env.example.sh   (or your env.<INSTANCE>.sh)" >&2
+    echo "                Try: source envs/env.example.sh  (or your envs/env.<INSTANCE>.sh)" >&2
     exit 1
 fi
 
@@ -28,7 +28,7 @@ if [[ -z "${CLAUDE_SANDBOX_INSTANCE:-}" ]]; then
     echo "CRITICAL ERROR: CLAUDE_SANDBOX_INSTANCE is not set, does not exist, or is empty." >&2
     echo "                Each sandbox needs a unique instance ID so concurrent" >&2
     echo "                inner dockerds don't share /var/lib/docker." >&2
-    echo "                Try: source env.example.sh   (or your env.<INSTANCE>.sh)" >&2
+    echo "                Try: source envs/env.example.sh  (or your envs/env.<INSTANCE>.sh)" >&2
     exit 1
 fi
 
@@ -57,7 +57,7 @@ CONTAINER_NAME="claude-sandbox-${CLAUDE_SANDBOX_INSTANCE}"
 #
 # Existing per-instance dirs are untouched when USE_SHARED=0, so old instances
 # keep working exactly as before. Opt new instances into shared mode by
-# exporting CLAUDE_SANDBOX_USE_SHARED=1 in their env.<INSTANCE>.sh.
+# exporting CLAUDE_SANDBOX_USE_SHARED=1 in their envs/env.<INSTANCE>.sh.
 USE_SHARED="${CLAUDE_SANDBOX_USE_SHARED:-0}"
 
 # Resolve the script's actual location, following symlinks, so SCRIPT_DIR
@@ -116,7 +116,9 @@ resolve_host_bind_ip() {
     fi
     printf '%s' "$ip"
 }
-PERSISTENT_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-persistent-state${INSTANCE_SUFFIX}"
+# Per-instance persistent state lives under persistent-states/<INSTANCE>/.
+# One env (envs/env.<INSTANCE>.sh) -> one instance -> one state dir here.
+PERSISTENT_STATE_DIR="${SCRIPT_DIR}/persistent-states/${CLAUDE_SANDBOX_INSTANCE}"
 SHARED_STATE_DIR="${SCRIPT_DIR}/claude-sandbox-shared"
 SANDBOX_HOME="${CLAUDE_SANDBOX_HOME:-$PERSISTENT_STATE_DIR}"
 SHARED_HOME="${CLAUDE_SANDBOX_SHARED:-$SHARED_STATE_DIR}"
@@ -330,7 +332,7 @@ MOUNTS+=(
 # to launch otherwise so Docker doesn't auto-create it as a directory
 # (same trap the `check_not_directory` guard above protects against).
 #
-# Example env.<INSTANCE>.sh:
+# Example envs/env.<INSTANCE>.sh:
 #   export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference /srv/corpus /etc/shared-config"
 RO_MOUNTS_RAW="${CLAUDE_SANDBOX_RO_MOUNTS:-}"
 if [[ -n "$RO_MOUNTS_RAW" ]]; then

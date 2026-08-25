@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # env.example.sh — defaults work on a fresh clone with no edits.
+# Lives in envs/ alongside one env.<NAME>.sh per workspace.
 #
 # Source directly for the "main" shared-mode instance:
-#   source env.example.sh && ./run_claude_docker.sh
+#   source envs/env.example.sh && ./run_claude_docker.sh
 #
-# For a second instance, copy and tweak:
-#   cp env.example.sh env.<NAME>.sh
-#   $EDITOR env.<NAME>.sh   # change CLAUDE_SANDBOX_INSTANCE, optionally paths
-#   source env.<NAME>.sh && ./run_claude_docker.sh
+# For a new workspace, copy and tweak:
+#   cp envs/env.example.sh envs/env.<NAME>.sh
+#   $EDITOR envs/env.<NAME>.sh   # change CLAUDE_SANDBOX_INSTANCE, optionally paths
+#   source envs/env.<NAME>.sh && ./run_claude_docker.sh
+#
+# Each env gets its own persistent state at persistent-states/<INSTANCE>/.
 
-# Resolve repo root regardless of where this file is sourced from.
-__ENV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve repo root. This file lives in envs/, so repo root is the PARENT
+# of its own directory — hence the /.. below. All ${__ENV_SCRIPT_DIR}
+# defaults (context_reference, workspace) resolve against the repo root.
+__ENV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Shared-state layout: settings, skills, plugins, hooks, memory, sessions
 # come from claude-sandbox-shared/. Set to 0 for fully isolated per-instance

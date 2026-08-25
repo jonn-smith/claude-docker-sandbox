@@ -20,7 +20,7 @@ Beyond the normal setup and build features, this sandbox has:
 - The [ponytail](https://github.com/DietrichGebert/ponytail) "lazy senior dev" plugin **vendored at v4.8.4** under `claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/` — pushes the agent toward the smallest solution that works (YAGNI, stdlib first). Same vendoring model as caveman (no first-session network fetch), enabled by default, `[PONYTAIL]` chip in the statusline. Complements caveman: caveman shapes prose terseness, ponytail shapes code minimalism.
 - Optional read-only reference mounts: point `CLAUDE_SANDBOX_RO_MOUNTS` at host directories and they appear under `/read-only-reference/<name>` inside the container, enforced read-only at the mount layer (`EROFS`, un-remountable without `CAP_SYS_ADMIN`). See [Read-only reference mounts](#read-only-reference-mounts).
 - Optional `--shm-size` override via `CLAUDE_SANDBOX_SHM_SIZE` for workloads that need more than Docker's default 64 MB `/dev/shm` (Chromium/Playwright, PyTorch DataLoader). See [Shared memory](#shared-memory---shm-size).
-- An interactive launcher (`start_sandbox.sh`) that lets you pick instance, resume an existing Claude session, and choose a workdir from an fzf menu, instead of hand-sourcing `env.<INSTANCE>.sh` and running `run_claude_docker.sh` directly.
+- An interactive launcher (`start_sandbox.sh`) that lets you pick instance, resume an existing Claude session, and choose a workdir from an fzf menu, instead of hand-sourcing `envs/env.<INSTANCE>.sh` and running `run_claude_docker.sh` directly.
 - A composite statusline showing model · effort, the active backend (`[CLAUDE.AI]` / `[VERTEX]`), live headroom savings (`[HR 2.0M]`, measured), and per-session caveman savings (`[CAVEMAN ⛏ 2.1M]`, estimated) plus plugin chips. See [Statusline badges](#statusline-badges).
 
 I've tried to include everything I need for my typical work.
@@ -45,16 +45,16 @@ Runs on **Linux** and **macOS** (Apple Silicon or Intel). User-facing scripts (`
 cd docker && make && cd ..
 
 # 3. Launch the default "main" shared-mode instance.
-#    env.example.sh defaults to in-repo workspace/ + context_reference/.
-source env.example.sh
+#    envs/env.example.sh defaults to in-repo workspace/ + context_reference/.
+source envs/env.example.sh
 ./run_claude_docker.sh
 ```
 
-First launch in any sandbox prompts `/login` inside the container. The resulting OAuth token persists into that sandbox's state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `claude-sandbox-persistent-state-<INSTANCE>/.claude/.credentials.json` in per-instance mode), so subsequent launches of the same sandbox skip the login. No host-side Claude Code install is required, and credentials are not shared with the host's `~/.claude/`.
+First launch in any sandbox prompts `/login` inside the container. The resulting OAuth token persists into that sandbox's state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `persistent-states/<INSTANCE>/.claude/.credentials.json` in per-instance mode), so subsequent launches of the same sandbox skip the login. No host-side Claude Code install is required, and credentials are not shared with the host's `~/.claude/`.
 
-### Interactive launcher (alternative to step 4)
+### Interactive launcher (alternative to step 3)
 
-`start_sandbox.sh` opens an fzf menu: pick instance, optionally resume an existing Claude session, pick a workdir, launch. It seeds workdir candidates from any `env.*.sh` plus every workdir you've previously picked (master registry at `workdirs.txt`). Sessions are annotated with their host workdir in the picker so you can tell two `main` sessions apart by what they were operating on.
+`start_sandbox.sh` opens an fzf menu: pick instance, optionally resume an existing Claude session, pick a workdir, launch. It seeds workdir candidates from any `envs/env.*.sh` plus every workdir you've previously picked (master registry at `workdirs.txt`). Sessions are annotated with their host workdir in the picker so you can tell two `main` sessions apart by what they were operating on.
 
 ```bash
 ./start_sandbox.sh
@@ -65,12 +65,12 @@ First launch in any sandbox prompts `/login` inside the container. The resulting
 For a second concurrent instance, copy the template and change the instance name:
 
 ```bash
-cp env.example.sh env.B.sh
-$EDITOR env.B.sh   # set CLAUDE_SANDBOX_INSTANCE=B (and PROJECTS_DIR if different)
-source env.B.sh && ./run_claude_docker.sh
+cp envs/env.example.sh envs/env.B.sh
+$EDITOR envs/env.B.sh   # set CLAUDE_SANDBOX_INSTANCE=B (and PROJECTS_DIR if different)
+source envs/env.B.sh && ./run_claude_docker.sh
 ```
 
-`env.*.sh` (other than `env.example.sh`) is gitignored — your per-instance files won't accidentally land in commits.
+`envs/env.*.sh` (other than `envs/env.example.sh`) is gitignored — your per-instance files won't accidentally land in commits.
 
 For details on per-instance vs shared layouts and parallel launches, see [Mounts](#mounts).
 
@@ -130,7 +130,7 @@ Approximate image size: ~3 GB.
 - **No mail relay by default.** Linux's `setup_host.sh` configures host postfix with mynetworks so the in-container hook can send via SMTP. macOS has no stock outbound-MTA path; `setup_host_macos.sh` prints instructions for configuring `/etc/postfix/main.cf` with SMTP-AUTH against Gmail/SES/SendGrid, but does not automate it. Skip if you don't need email notifications.
 - **Email notifications remain untested and may not work even after configuration.**
 
-- No host-side Claude Code install required. Each sandbox prompts `/login` on its own first launch and stores the resulting OAuth token inside its own state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `claude-sandbox-persistent-state-<INSTANCE>/.claude/.credentials.json` in per-instance mode). The host's `~/.claude/` is NOT mounted into the container.
+- No host-side Claude Code install required. Each sandbox prompts `/login` on its own first launch and stores the resulting OAuth token inside its own state dir (`claude-sandbox-shared/.claude/.credentials.json` in shared mode, `persistent-states/<INSTANCE>/.claude/.credentials.json` in per-instance mode). The host's `~/.claude/` is NOT mounted into the container.
 
 ## Build
 
@@ -174,7 +174,7 @@ How it works: when `HEADROOM=1`, `start_script.sh` launches `headroom proxy` on 
 
 Trust model: the proxy reads every byte of every request — that's how compression works. It runs entirely inside the same container as `claude`, so it sees the same OAuth token Claude already has and no wider trust boundary is opened. Code is Apache-2.0; pin the version in `Dockerfile`. If you don't want a third-party dep in the request path, leave `HEADROOM` unset and traffic goes direct.
 
-Per-instance default: add `export HEADROOM=1` to the matching `env.<INSTANCE>.sh` to make it sticky for that sandbox.
+Per-instance default: add `export HEADROOM=1` to the matching `envs/env.<INSTANCE>.sh` to make it sticky for that sandbox.
 
 ## Statusline badges
 
@@ -276,7 +276,7 @@ FISS_MCP_ALLOW_WRITES=1 ./run_claude_docker.sh    # on, WRITE MODE (loud banner)
 
 **Lifecycle**: trap on `EXIT INT TERM` kills the host fastmcp process. If the launcher is `kill -9`'d, the orphan can be reaped with `pkill -f run-server.py`. The MCP log lives at `${SANDBOX_HOME}/.claude/host_fiss_mcp.log`.
 
-Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` / `FISS_MCP_PORT` in `env.<INSTANCE>.sh`.
+Per-instance default: set `FISS_MCP` / `FISS_MCP_ALLOW_WRITES` / `FISS_MCP_PORT` in `envs/env.<INSTANCE>.sh`.
 
 ## Vertex AI mode (Google Cloud auth)
 
@@ -306,7 +306,7 @@ source SET_VERTEX_MODE.sh
 
 `SET_VERTEX_MODE.sh` is gitignored — your real project id won't accidentally land in a commit. To go back to default Anthropic-API (subscription) mode, `source UNSET_VERTEX_MODE.sh` (or open a fresh shell).
 
-**Toggle**: per-launch, not mid-session. claude reads env at startup. Different `env.<INSTANCE>.sh` files can pin different modes (one sandbox always Vertex, another always subscription).
+**Toggle**: per-launch, not mid-session. claude reads env at startup. Different `envs/env.<INSTANCE>.sh` files can pin different modes (one sandbox always Vertex, another always subscription).
 
 | HEADROOM | USE_VERTEX | Flow |
 |---|---|---|
@@ -341,7 +341,7 @@ When HEADROOM=0, `start_script.sh` instead sets `ANTHROPIC_BASE_URL=$ANTHROPIC_T
 
 **fiss-mcp and Vertex are orthogonal** — you can run both simultaneously (separate processes, separate port ranges, separate trap cleanups) or either alone.
 
-Per-instance default: add `source SET_VERTEX_MODE.sh` at the top of `env.<INSTANCE>.sh` if you want a specific sandbox to always run in Vertex mode.
+Per-instance default: add `source SET_VERTEX_MODE.sh` at the top of `envs/env.<INSTANCE>.sh` if you want a specific sandbox to always run in Vertex mode.
 
 ## Mounts
 
@@ -350,7 +350,7 @@ Two layout modes, picked per launch by `CLAUDE_SANDBOX_USE_SHARED`:
 - **Per-instance (`=0` or unset)** — full Claude state lives in `$SANDBOX_HOME/.claude` for this one instance. Instances are fully independent. No shared dir touched.
 - **Shared (`=1`)** — settings/skills/plugins/hooks/plans/tasks/sessions come from `$SHARED_HOME` (one copy across all shared-mode instances). `.claude.json` plus write-hot dirs (cache, file-history, backups, shell-snapshots, session-env, projects, history.jsonl) stay in `$SANDBOX_HOME` and bind-mount on top of the shared `.claude`. `.claude.json` and `projects/` are per-instance because they're rewritten on every change and hold per-project allowedTools/mcpServers/history/transcripts that would race if shared.
 
-The example envs (`env.example.sh`, `env.B.sh`, `env.WHB.sh`, `env.GATK.sh`, `env.main.sh`) all set `CLAUDE_SANDBOX_USE_SHARED=1` — shared is the de-facto default on this checkout. The code-level fallback (when neither set nor sourced) is per-instance.
+The example envs (`envs/env.example.sh`, `envs/env.B.sh`, `envs/env.WHB.sh`, `envs/env.GATK.sh`, `envs/env.main.sh`) all set `CLAUDE_SANDBOX_USE_SHARED=1` — shared is the de-facto default on this checkout. The code-level fallback (when neither set nor sourced) is per-instance.
 
 ### Per-instance mode (default)
 
@@ -381,13 +381,13 @@ The host's `~/.claude/` is NOT mounted. The OAuth token from `/login` lands at `
 
 The OAuth token from `/login` lands inside the shared `.claude/` (at `$SHARED_HOME/.claude/.credentials.json`) and is therefore shared across every shared-mode sandbox on this host — log in once, every shared-mode instance reuses the token. The host's `~/.claude/` is NOT mounted.
 
-`$SHARED_HOME` defaults to `claude-sandbox-shared/` next to `run_claude_docker.sh` (override: `CLAUDE_SANDBOX_SHARED`). `$SANDBOX_HOME` defaults to `claude-sandbox-persistent-state-${CLAUDE_SANDBOX_INSTANCE}/` (override: `CLAUDE_SANDBOX_HOME`). Both must be absolute paths.
+`$SHARED_HOME` defaults to `claude-sandbox-shared/` next to `run_claude_docker.sh` (override: `CLAUDE_SANDBOX_SHARED`). `$SANDBOX_HOME` defaults to `persistent-states/${CLAUDE_SANDBOX_INSTANCE}/` (override: `CLAUDE_SANDBOX_HOME`). Both must be absolute paths.
 
 Nothing else on the host is visible to the container.
 
 ### Adopting shared mode safely (no risk to existing instances)
 
-Opt a sandbox into shared mode by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to its `env.<INSTANCE>.sh` (the bundled `env.*.sh` files already do this). First launch on a fresh clone uses the tracked `claude-sandbox-shared/.claude/` (CLAUDE.md, settings.json, hooks, skills, **vendored caveman plugin source**, caveman defaults) directly; subsequent launches reuse it. Switch back to per-instance any time by removing that line — `run_claude_docker.sh` will seed a copy of the tracked settings + hooks into the per-instance dir on first launch (`seed_settings` / `seed_hooks`).
+Opt a sandbox into shared mode by adding `export CLAUDE_SANDBOX_USE_SHARED=1` to its `envs/env.<INSTANCE>.sh` (the bundled `envs/env.*.sh` files already do this). First launch on a fresh clone uses the tracked `claude-sandbox-shared/.claude/` (CLAUDE.md, settings.json, hooks, skills, **vendored caveman plugin source**, caveman defaults) directly; subsequent launches reuse it. Switch back to per-instance any time by removing that line — `run_claude_docker.sh` will seed a copy of the tracked settings + hooks into the per-instance dir on first launch (`seed_settings` / `seed_hooks`).
 
 ### Concurrency caveats (shared mode)
 
@@ -399,7 +399,7 @@ Hot dirs are per-instance — no race. Shared items are write-rare in practice, 
 
 ## Read-only reference mounts
 
-Optional caller-supplied read-only bind mounts for reference datasets, shared corpora, system config — anything the agent should be able to read but never mutate. Set `CLAUDE_SANDBOX_RO_MOUNTS` in your `env.<INSTANCE>.sh` to a **space-separated list of host directories** (no container path — the launcher picks one):
+Optional caller-supplied read-only bind mounts for reference datasets, shared corpora, system config — anything the agent should be able to read but never mutate. Set `CLAUDE_SANDBOX_RO_MOUNTS` in your `envs/env.<INSTANCE>.sh` to a **space-separated list of host directories** (no container path — the launcher picks one):
 
 ```bash
 export CLAUDE_SANDBOX_RO_MOUNTS="/data/reference /srv/corpus /etc/shared-config"
@@ -425,7 +425,7 @@ The interactive launcher (`start_sandbox.sh`) shows a one-line `RO mounts` summa
 
 ## Shared memory (`--shm-size`)
 
-Docker's default `/dev/shm` is 64 MB, which is too small for Chromium/Playwright, PyTorch DataLoader workers, and other multi-process shared-memory consumers — they fail with `No space left on device` on `/dev/shm`. Set `CLAUDE_SANDBOX_SHM_SIZE` in your `env.<INSTANCE>.sh` to raise it:
+Docker's default `/dev/shm` is 64 MB, which is too small for Chromium/Playwright, PyTorch DataLoader workers, and other multi-process shared-memory consumers — they fail with `No space left on device` on `/dev/shm`. Set `CLAUDE_SANDBOX_SHM_SIZE` in your `envs/env.<INSTANCE>.sh` to raise it:
 
 ```bash
 export CLAUDE_SANDBOX_SHM_SIZE=2g   # Docker size syntax: 512m, 2g, 4g, …
@@ -435,7 +435,7 @@ The launcher passes it through as `docker run --shm-size`. Unset → Docker's 64
 
 ## Email notifications
 
-A hook (`notify-if-long.sh`) emails you when a prompt takes longer than a threshold (default 120 s) and when a session ends. Configure in your `env.<INSTANCE>.sh`:
+A hook (`notify-if-long.sh`) emails you when a prompt takes longer than a threshold (default 120 s) and when a session ends. Configure in your `envs/env.<INSTANCE>.sh`:
 
 ```bash
 export CLAUDE_NOTIFY_EMAIL=you@example.com          # recipient; unset/empty disables
@@ -465,12 +465,12 @@ This sandbox restricts **filesystem access only**. Network access from inside th
 
 ## Adapting paths for your machine
 
-Paths are driven by environment variables — nothing is hardcoded in `run_claude_docker.sh`. Set these in your `env.<INSTANCE>.sh` (start from `env.example.sh`):
+Paths are driven by environment variables — nothing is hardcoded in `run_claude_docker.sh`. Set these in your `envs/env.<INSTANCE>.sh` (start from `envs/env.example.sh`):
 
 - `CLAUDE_SANDBOX_PROJECTS_DIR` — host dir mounted at `/workspace` (required).
 - `CLAUDE_SANDBOX_CONTEXT_DIR` — host dir mounted at `/context` (required).
 - `CLAUDE_SANDBOX_INSTANCE` — unique instance name (required; suffixes container, DinD volume, state dir).
-- `CLAUDE_SANDBOX_HOME` — override the per-instance state dir (default: `claude-sandbox-persistent-state-<INSTANCE>/` alongside the launcher).
+- `CLAUDE_SANDBOX_HOME` — override the per-instance state dir (default: `persistent-states/<INSTANCE>/` alongside the launcher).
 - `CLAUDE_SANDBOX_SHARED` — override the shared dir in shared mode (default: `claude-sandbox-shared/`).
 
 Per-instance overrides also cover `HEADROOM`, `HEADROOM_PORT`, `FISS_MCP`, `FISS_MCP_ALLOW_WRITES`, `FISS_MCP_PORT`, `CODEGRAPH` (set `=0` to skip CodeGraph MCP registration in that sandbox), `CLAUDE_SANDBOX_USE_SHARED`, `CLAUDE_SANDBOX_RO_MOUNTS` (space-separated host directories — no container path; each shows up at `/read-only-reference/<basename>` inside the container, with parent-dir prefixes underscored on collision; host paths must exist or the launcher refuses), and the Vertex-mode launcher signals (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `VERTEX_PROXY_PORT`) — set whichever you want sticky for that sandbox.

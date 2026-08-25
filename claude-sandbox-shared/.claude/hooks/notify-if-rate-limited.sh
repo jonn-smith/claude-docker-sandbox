@@ -17,7 +17,7 @@ PROMPT_FILE="${HOME}/claude_task_prompt_$(basename $PWD)"
 HOST_IP=$(ip route | awk '/default/ {print $3}')
 SMTP_PORT=25
 
-# Notification config — set via env in env.<INSTANCE>.sh, forwarded by
+# Notification config — set via env in envs/env.<INSTANCE>.sh, forwarded by
 # run_claude_docker.sh into the container. Hook is a no-op if
 # CLAUDE_NOTIFY_EMAIL is unset/empty.
 CLAUDE_FROM_ADDRESS="${CLAUDE_NOTIFY_FROM:-claude-sandbox}"

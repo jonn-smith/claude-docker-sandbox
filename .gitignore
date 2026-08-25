@@ -1,8 +1,8 @@
-# Per-instance state dirs are runtime — keep only the README placeholder.
-# Default hooks/settings come from claude-sandbox-shared/, not from any
-# instance dir.
-claude-sandbox-persistent-state-*/*
-!claude-sandbox-persistent-state-*/README.md
+# Per-instance state dirs are runtime (persistent-states/<INSTANCE>/) — keep
+# only a README placeholder so the folder exists on a fresh clone. Default
+# hooks/settings come from claude-sandbox-shared/, not from any instance dir.
+persistent-states/*
+!persistent-states/README.md
 
 # Shared dir is also runtime, but track the default hooks scripts so a fresh
 # clone has working hooks on first launch.
@@ -54,7 +54,10 @@ context_reference/*
 
 SAVED_SNAPSHOTS
 
-# Per-instance env files are user-specific. Only the template is tracked.
+# Per-workspace env files (envs/env.<NAME>.sh) are user-specific. Only the
+# template is tracked. Legacy root-level env.*.sh kept ignored for old clones.
+envs/env.*.sh
+!envs/env.example.sh
 env.sh
 env.*.sh
 !env.example.sh
@@ -92,3 +95,6 @@ SESSION_ARCHIVE/INDEX.md
 # CLASSIFIED.md embeds session titles + prompt snippets too — same
 # privacy reason. It's your working attribution artifact, regenerable.
 SESSION_ARCHIVE/CLASSIFIED.md
+
+# Prewarmed HF model cache — downloaded by `make prewarm`, not source.
+docker/hf-cache/

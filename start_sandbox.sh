@@ -8,7 +8,7 @@
 #   3. Combined session+flags picker — recent sessions (mtime-desc) with
 #      "▶ NEW SESSION" at the bottom; Headroom / Vertex / FISS-writes flags
 #      shown in the right preview pane and toggled live via Alt-H / Alt-V /
-#      Alt-F. Flag changes persist back to env.<INSTANCE>.sh inside a managed
+#      Alt-F. Flag changes persist back to envs/env.<INSTANCE>.sh inside a managed
 #      block (idempotent) when the user finally launches.
 #   4. Sources the (possibly patched) env file and execs
 #      ./run_claude_docker.sh --dangerously-skip-permissions [--resume <uuid>].
@@ -18,7 +18,7 @@
 # per-process tempdir. ESC-ing backward through the flow re-uses those caches
 # instead of re-forking docker / python, so navigation is instant.
 #
-# Managed block convention: env.<INSTANCE>.sh may contain a block bracketed by
+# Managed block convention: envs/env.<INSTANCE>.sh may contain a block bracketed by
 # the markers below. start_sandbox.sh regenerates that block from current
 # toggle state; everything outside the markers is preserved verbatim.
 #
@@ -48,7 +48,7 @@ MARK_BEGIN="# vvv start_sandbox managed block — regenerated, do not edit vvv"
 MARK_END="# ^^^ start_sandbox managed block ^^^"
 
 # Master workdir registry. Plain text, one absolute host path per line. Seeded
-# from every env.<area>.sh `export CLAUDE_SANDBOX_PROJECTS_DIR=...` line (both
+# from every envs/env.<area>.sh `export CLAUDE_SANDBOX_PROJECTS_DIR=...` line (both
 # active and commented out) on first run; thereafter every chosen workdir is
 # unioned in. This is the "master coordinating location" — the list of paths
 # this host knows it can mount at /workspace.
@@ -185,7 +185,7 @@ hrule() { local w=$1 ch=${2:-─}; printf '%*s' "$w" '' | tr ' ' "$ch"; }
 
 # --- workdir registry --------------------------------------------------------
 #
-# Maintain $WORKDIRS_FILE as union(existing file, env.<area>.sh parsed paths).
+# Maintain $WORKDIRS_FILE as union(existing file, envs/env.<area>.sh parsed paths).
 # Sorted, unique. Idempotent: running twice with no env changes produces no
 # diff. Writes only if content changed (avoids meaningless mtime bumps).
 sync_workdirs_registry() {
@@ -218,7 +218,7 @@ register_workdir() {
 # --- area discovery ----------------------------------------------------------
 
 shopt -s nullglob
-ENV_FILES=("$SCRIPT_DIR"/env.*.sh)
+ENV_FILES=("$SCRIPT_DIR"/envs/env.*.sh)
 shopt -u nullglob
 
 declare -a AREAS=()
@@ -230,8 +230,8 @@ for f in "${ENV_FILES[@]}"; do
 done
 
 [[ ${#AREAS[@]} -gt 0 ]] || {
-    echo "No env.<NAME>.sh files found in ${SCRIPT_DIR}." >&2
-    echo "Copy env.example.sh to env.<NAME>.sh first." >&2
+    echo "No envs/env.<NAME>.sh files found in ${SCRIPT_DIR}/envs." >&2
+    echo "Copy envs/env.example.sh to envs/env.<NAME>.sh first." >&2
     exit 1
 }
 
@@ -267,8 +267,8 @@ build_one_area() {
     local envfile state_dir flags projects_dir hr fw vx ro_mounts badge
     local latest mt age sname desc uuid area_label status
 
-    envfile="$SCRIPT_DIR/env.${area}.sh"
-    state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}"
+    envfile="$SCRIPT_DIR/envs/env.${area}.sh"
+    state_dir="$SCRIPT_DIR/persistent-states/${area}"
     flags=$(sb_read_env_flags "$envfile")
     IFS='|' read -r projects_dir hr fw vx ro_mounts <<<"$flags"
     badge=$(flag_badge "$hr" "$vx" "$fw")
@@ -317,7 +317,7 @@ build_one_area() {
 
     {
         printf '╭─ Sandbox %s\n' "$area"
-        printf '│  Env file   env.%s.sh\n' "$area"
+        printf '│  Env file   envs/env.%s.sh\n' "$area"
         printf '│  Workdir    %s\n' "${projects_dir:-?}"
         printf '│  State dir  %s\n' "$state_dir"
         printf '│  Status     %s\n' "$status"
@@ -365,7 +365,7 @@ build_session_cache() {
     local wdirs_file="$PREVIEW_CACHE_DIR/sessions.${area}.workdirs"
     : > "$wdirs_file"
 
-    local state_dir="$SCRIPT_DIR/claude-sandbox-persistent-state-${area}/.claude/projects"
+    local state_dir="$SCRIPT_DIR/persistent-states/${area}/.claude/projects"
     if [ -d "$state_dir" ]; then
         local mt f uuid age name desc_full short workdir wd_short
         while IFS=$'\t' read -r mt f; do
@@ -638,7 +638,7 @@ persist_toggles() {
     } > "$ENV_FILE"
     rm -f "$TMP"
 
-    echo "Updated env.${CHOSEN_AREA}.sh: Headroom=$HR Vertex=$VX FISS_writes=$FW"
+    echo "Updated envs/env.${CHOSEN_AREA}.sh: Headroom=$HR Vertex=$VX FISS_writes=$FW"
     # Sync baseline so a later round-trip through this menu doesn't re-write
     # the block when nothing further changed.
     INITIAL_HR=$HR; INITIAL_VX=$VX; INITIAL_FW=$FW
@@ -686,7 +686,7 @@ session_header_labels(){ session_row "WORKDIR" "UUID" "LAST" "SUMMARY"; }
 # Returns 0 (sets CHOSEN_SESSION + HR/VX/FW + ENV_FILE + INITIAL_*),
 # 10 (ESC → back to area picker), 130 (Ctrl-C).
 pick_session() {
-    ENV_FILE="$SCRIPT_DIR/env.${CHOSEN_AREA}.sh"
+    ENV_FILE="$SCRIPT_DIR/envs/env.${CHOSEN_AREA}.sh"
     local toggle_file="$PREVIEW_CACHE_DIR/toggles.${CHOSEN_AREA}"
     local sess_rows="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.rows"
     local sess_uuids="$PREVIEW_CACHE_DIR/sessions.${CHOSEN_AREA}.uuids"
@@ -920,7 +920,7 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="$CHOSEN_WORKDIR"
 # already there (came from the picker list), this is a no-op write.
 register_workdir "$CHOSEN_WORKDIR"
 
-STATE_PROJECTS_DIR="$SCRIPT_DIR/claude-sandbox-persistent-state-${CHOSEN_AREA}/.claude/projects"
+STATE_PROJECTS_DIR="$SCRIPT_DIR/persistent-states/${CHOSEN_AREA}/.claude/projects"
 
 LAUNCH_ARGS=(--dangerously-skip-permissions)
 if [ "$CHOSEN_SESSION" != "NEW" ]; then
