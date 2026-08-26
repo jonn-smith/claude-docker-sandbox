@@ -135,7 +135,10 @@ echo "Ensuring python3 + python3-venv + python3-pip are installed"
 sudo apt-get install -y --no-install-recommends python3 python3-venv python3-pip
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-bash "${SCRIPT_DIR}/host_fiss_mcp/install.sh"
+# host_fiss_mcp/ lives at the REPO ROOT, not under scripts/. SCRIPT_DIR here
+# is the scripts/ dir (this file's location), so go up one level.
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+bash "${REPO_ROOT}/host_fiss_mcp/install.sh"
 
 ################################################################################
 
