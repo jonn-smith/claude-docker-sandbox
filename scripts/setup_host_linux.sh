@@ -57,7 +57,11 @@ if [[ -z "${DOCKER_PIN_VERSION}" || -z "${DOCKER_CLI_PIN_VERSION}" ]]; then
 fi
 
 echo "Pinning docker-ce to ${DOCKER_PIN_VERSION} (Docker 29.x breaks sysbox-runc)."
-sudo apt install -y \
+# --allow-downgrades: we deliberately pin BELOW the latest docker-ce (29.x
+# breaks sysbox-runc). On a machine that already has a newer docker-ce,
+# apt refuses to move to the older pin under -y without this flag
+# ("Packages were downgraded and -y was used without --allow-downgrades").
+sudo apt install -y --allow-downgrades \
   "docker-ce=${DOCKER_PIN_VERSION}" \
   "docker-ce-cli=${DOCKER_CLI_PIN_VERSION}" \
   containerd.io docker-buildx-plugin docker-compose-plugin
@@ -72,7 +76,10 @@ sudo usermod -aG docker $USER
 
 echo "Installing sysbox for docker-in-a-docker support"
 wget https://downloads.nestybox.com/sysbox/releases/v0.6.7/sysbox-ce_0.6.7-0.linux_amd64.deb
-sudo apt install -y ./sysbox-ce_0.6.7-0.linux_amd64.deb
+# --allow-downgrades for the same reason as docker above: sysbox is version-
+# pinned, so a machine with a newer sysbox-ce already installed would need
+# apt's permission to move to this pinned build under -y.
+sudo apt install -y --allow-downgrades ./sysbox-ce_0.6.7-0.linux_amd64.deb
 # postinst restarts dockerd, registers sysbox-runc in /etc/docker/daemon.json
 
 #Verify:
