@@ -153,11 +153,16 @@ The launcher script (`run_claude_docker.sh`) forwards any arguments to `claude` 
 ./run_claude_docker.sh                                     # fresh session
 ./run_claude_docker.sh --continue                          # resume most recent
 ./run_claude_docker.sh --resume <session-id>               # resume specific
-./run_claude_docker.sh --dangerously-skip-permissions      # no prompts
-./run_claude_docker.sh --continue --dangerously-skip-permissions
 ```
 
-To drop into a shell instead of `claude`, change the trailing `claude "$@"` in `run_claude_docker.sh` to `/bin/bash`.
+### Sandbox defaults applied at launch
+
+`docker/start_script.sh` adds two flags to the `claude` invocation automatically, each only if you didn't pass it yourself (an explicit flag always wins):
+
+- **`--name "$CLAUDE_SANDBOX_INSTANCE"`** — the session is auto-named after the instance from your env script, so sessions are identifiable in the picker and Remote Control without typing `-n` every launch. Pass your own `--name`/`-n` to override.
+- **`--dangerously-skip-permissions`** — this is a disposable, filesystem-isolated sandbox built for unattended work, so permission prompts are skipped by default; you no longer type the flag every time. This means the agent runs tool calls inside the container **without prompting** — appropriate here because the container can only see the mounted workspace and its own state, never the host. If you want prompts back for a session, edit the `claude` invocation at the bottom of `docker/start_script.sh` (remove the auto-added flag).
+
+To drop into a shell instead of `claude`, change the trailing `exec claude ...` in `docker/start_script.sh` to `/bin/bash`.
 
 ## Headroom proxy (token compression)
 

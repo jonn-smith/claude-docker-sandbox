@@ -774,6 +774,7 @@ docker run --rm -it \
   ${GPU_FLAGS[@]+"${GPU_FLAGS[@]}"} \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
+  -e CLAUDE_SANDBOX_INSTANCE="${CLAUDE_SANDBOX_INSTANCE}" \
   -e HEADROOM="${HEADROOM:-0}" \
   -e HEADROOM_PORT="${HEADROOM_PORT:-8787}" \
   -e CLAUDE_NOTIFY_EMAIL="${CLAUDE_NOTIFY_EMAIL:-}" \
