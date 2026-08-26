@@ -157,12 +157,12 @@ The launcher script (`run_claude_docker.sh`) forwards any arguments to `claude` 
 
 ### Sandbox defaults applied at launch
 
-`docker/start_script.sh` adds two flags to the `claude` invocation automatically, each only if you didn't pass it yourself (an explicit flag always wins):
+`run_claude_docker.sh` injects two flags into the args that reach `claude` in the container, each only if you didn't pass it yourself (an explicit flag always wins). This is done **host-side in the launcher**, not in the baked image, so changing these defaults needs no `make build`:
 
 - **`--name "$CLAUDE_SANDBOX_INSTANCE"`** — the session is auto-named after the instance from your env script, so sessions are identifiable in the picker and Remote Control without typing `-n` every launch. Pass your own `--name`/`-n` to override.
-- **`--dangerously-skip-permissions`** — this is a disposable, filesystem-isolated sandbox built for unattended work, so permission prompts are skipped by default; you no longer type the flag every time. This means the agent runs tool calls inside the container **without prompting** — appropriate here because the container can only see the mounted workspace and its own state, never the host. If you want prompts back for a session, edit the `claude` invocation at the bottom of `docker/start_script.sh` (remove the auto-added flag).
+- **`--dangerously-skip-permissions`** — this is a disposable, filesystem-isolated sandbox built for unattended work, so permission prompts are skipped by default; you no longer type the flag every time. The agent runs tool calls inside the container **without prompting** — appropriate here because the container only sees the mounted workspace and its own state, never the host. To get prompts back, edit the `CLAUDE_DEFAULT_ARGS` block near the bottom of `run_claude_docker.sh`.
 
-To drop into a shell instead of `claude`, change the trailing `exec claude ...` in `docker/start_script.sh` to `/bin/bash`.
+To drop into a shell instead of `claude`, change the trailing `claude "$@"` in `docker/start_script.sh` to `/bin/bash`.
 
 ## Headroom proxy (token compression)
 

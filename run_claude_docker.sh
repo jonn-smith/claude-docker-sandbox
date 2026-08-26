@@ -755,6 +755,25 @@ else
   fi
 fi
 
+# Sandbox launch defaults, injected into the args that reach `claude` inside
+# the container. Done HOST-SIDE (here) rather than in the baked start_script
+# so changing them needs no image rebuild. Each is added only if the caller
+# didn't already pass it, so an explicit flag wins.
+#
+#   --name <CLAUDE_SANDBOX_INSTANCE>  auto-name the session after the instance
+#       so sessions are identifiable without typing -n every launch.
+#   --dangerously-skip-permissions   disposable, host-isolated sandbox built
+#       for unattended work — don't make the operator type this every time.
+CLAUDE_DEFAULT_ARGS=()
+case " $* " in
+  *" --name "*|*" -n "*) : ;;
+  *) [[ -n "${CLAUDE_SANDBOX_INSTANCE:-}" ]] && CLAUDE_DEFAULT_ARGS+=(--name "${CLAUDE_SANDBOX_INSTANCE}") ;;
+esac
+case " $* " in
+  *" --dangerously-skip-permissions "*) : ;;
+  *) CLAUDE_DEFAULT_ARGS+=(--dangerously-skip-permissions) ;;
+esac
+
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
@@ -774,7 +793,6 @@ docker run --rm -it \
   ${GPU_FLAGS[@]+"${GPU_FLAGS[@]}"} \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
-  -e CLAUDE_SANDBOX_INSTANCE="${CLAUDE_SANDBOX_INSTANCE}" \
   -e HEADROOM="${HEADROOM:-0}" \
   -e HEADROOM_PORT="${HEADROOM_PORT:-8787}" \
   -e CLAUDE_NOTIFY_EMAIL="${CLAUDE_NOTIFY_EMAIL:-}" \
@@ -792,5 +810,6 @@ docker run --rm -it \
   -e CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" \
   -e ANTHROPIC_TARGET_API_URL="${VERTEX_PROXY_URL_FOR_CONTAINER}" \
   -w /workspace \
-  claude-sandbox:${DOCKER_IMAGE_VERSION} /home/claude/start_script.sh "$@"
+  claude-sandbox:${DOCKER_IMAGE_VERSION} /home/claude/start_script.sh \
+    ${CLAUDE_DEFAULT_ARGS[@]+"${CLAUDE_DEFAULT_ARGS[@]}"} "$@"
 
