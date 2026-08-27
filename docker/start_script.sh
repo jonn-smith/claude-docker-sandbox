@@ -207,5 +207,7 @@ check_pin() {
 check_pin caveman 63a91ecadbf4c4719a4602a5abb00883f9966034
 check_pin ponytail bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
 
-# Run claude:
+# Run claude. Sandbox launch defaults (--name, --dangerously-skip-permissions)
+# are injected host-side by run_claude_docker.sh and arrive in "$@", so this
+# stays a plain passthrough — no rebuild needed to change those defaults.
 claude "$@"
