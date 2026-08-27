@@ -94,5 +94,15 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 #
 #export CLAUDE_SANDBOX_SHM_SIZE=2g
 
+# Optional raw journal audit trail. The journal-nudge.sh hook always
+# reminds the agent to keep /workspace/JOURNAL.md (the curated research
+# journal). Set this to 1 to ALSO append a guaranteed, mechanical
+# "timestamp<TAB>prompt" line for every turn — a separate, exhaustive
+# capture distinct from the curated journal. Off by default. Path defaults
+# to /workspace/.journal-audit.log; override with CLAUDE_JOURNAL_AUDIT_FILE.
+#
+#export CLAUDE_JOURNAL_AUDIT=1
+#export CLAUDE_JOURNAL_AUDIT_FILE=/workspace/.journal-audit.log
+
 unset __ENV_SCRIPT_DIR
 
