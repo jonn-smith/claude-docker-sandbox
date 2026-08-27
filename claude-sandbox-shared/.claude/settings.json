@@ -8,6 +8,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/codegraph-init.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/journal-nudge.sh"
           }
         ]
       }
@@ -18,6 +22,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/record-task-start.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/journal-nudge.sh"
           }
         ]
       }

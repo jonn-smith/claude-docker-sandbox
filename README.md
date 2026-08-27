@@ -485,6 +485,12 @@ Leave `CLAUDE_NOTIFY_EMAIL` unset to disable entirely. Requires a working outbou
 - **Shared with the host**: OAuth credentials (single token refreshed by whichever process needs it first).
 - **Ephemeral** (gone on `--rm` container exit): anything written outside the mounts — `pip install`, `cargo install`, `sudo apt install`, files in `/tmp`, etc. If you want these to persist, either rebuild the image with them baked in, or add the relevant directories (e.g. `/opt/claude-venv`, `/usr/local/cargo`) as additional mounts.
 
+## Research journal reminder
+
+`CLAUDE.md` asks the agent to keep an append-only research journal at `/workspace/JOURNAL.md`. That's passive prose, so it drifts. A hook (`journal-nudge.sh`, wired on `SessionStart` + `UserPromptSubmit`) re-injects a terse reminder into context each turn — the same mechanism that keeps the caveman/ponytail modes active. It does **not** write entries itself: a shell hook only knows the timestamp and raw prompt, not the reasoning the journal wants, and per-prompt auto-append would violate the journal's own "meaningful steps only" rule. The agent still writes; the hook only raises salience.
+
+**Optional raw audit log** (off by default): set `CLAUDE_JOURNAL_AUDIT=1` in your `envs/env.<INSTANCE>.sh` to also append a guaranteed `timestamp⇥prompt` line per turn — a mechanical capture distinct from the curated `JOURNAL.md`. Path defaults to `/workspace/.journal-audit.log`; override with `CLAUDE_JOURNAL_AUDIT_FILE`. Both are bind-mounted/host-side — no rebuild to change.
+
 ## Customization
 
 - **Add Python packages**: extend the `pip install` line in the `Dockerfile` and rebuild. Pin versions there if you want reproducibility (`numpy==1.26.4`, etc.).
