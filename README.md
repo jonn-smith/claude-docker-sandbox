@@ -175,11 +175,23 @@ HEADROOM=1 ./run_claude_docker.sh --continue       # on + resume
 HEADROOM_PORT=9000 HEADROOM=1 ./run_claude_docker.sh   # custom port
 ```
 
-How it works: when `HEADROOM=1`, `start_script.sh` launches `headroom proxy` on `127.0.0.1:$HEADROOM_PORT` (default 8787) and exports `ANTHROPIC_BASE_URL` so `claude` routes through it. The proxy applies AST-aware code compression, JSON-output stripping, prompt-cache prefix alignment, and recovery-on-demand for dropped messages, then forwards to `api.anthropic.com` using the existing OAuth token. Process dies with the container; nothing persists across runs. Stats: `curl http://127.0.0.1:8787/stats` from inside the container.
+How it works: when `HEADROOM=1`, `start_script.sh` launches `headroom proxy` on `127.0.0.1:$HEADROOM_PORT` (default 8787) and exports `ANTHROPIC_BASE_URL` so `claude` routes through it. The proxy applies AST-aware code compression, JSON-output stripping, prompt-cache prefix alignment, and recovery-on-demand for dropped messages, then forwards to `api.anthropic.com` using the existing OAuth token. The proxy process and its compression state die with the container (only the downloaded model persists, in a shared host cache — see below). Stats: `curl http://127.0.0.1:8787/stats` from inside the container.
 
 Trust model: the proxy reads every byte of every request — that's how compression works. It runs entirely inside the same container as `claude`, so it sees the same OAuth token Claude already has and no wider trust boundary is opened. Code is Apache-2.0; pin the version in `Dockerfile`. If you don't want a third-party dep in the request path, leave `HEADROOM` unset and traffic goes direct.
 
 Per-instance default: add `export HEADROOM=1` to the matching `envs/env.<INSTANCE>.sh` to make it sticky for that sandbox.
+
+### Model cache (why the first launch used to hang)
+
+Headroom loads a token-compression model (kompress) during startup. The container's own `~/.cache/huggingface` is ephemeral — it dies with the `--rm` container — so on a fresh host every launch re-downloaded ~150 MB and raced the readiness probe, and the container died with `headroom: failed to come up`.
+
+Fixed with a **persistent, shared** model cache:
+
+- The launcher keeps one host directory, `hf-cache-runtime/`, bind-mounted into **every** instance's `~/.cache/huggingface`. The model is identical across instances and projects, so it's stored once and shared by all — not downloaded per instance.
+- When `HEADROOM=1`, `run_claude_docker.sh` **prefetches the model into that cache before starting the container** (`ensure_headroom_model`). It's idempotent: a no-op if the model is already there, otherwise a one-time ~150 MB download via a throwaway container (no host Python/HuggingFace deps needed). First launch on a new host does this once; every launch after is a cache hit and headroom is up in ~2s.
+- The readiness probe is 90s (was 25s) to cover a genuinely cold first download, and **headroom startup is now non-fatal**: if it still doesn't come up, the session launches *without* it (talking to the API directly) instead of dying.
+
+`hf-cache-runtime/` is gitignored and regenerates on demand. Delete it to force a fresh model download. If the pinned headroom version ever changes the model it loads, update `HEADROOM_MODEL_REPO` near the top of `run_claude_docker.sh`.
 
 ## Statusline badges
 

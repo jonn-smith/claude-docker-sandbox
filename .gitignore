@@ -98,3 +98,7 @@ SESSION_ARCHIVE/CLASSIFIED.md
 
 # Prewarmed HF model cache — downloaded by `make prewarm`, not source.
 docker/hf-cache/
+
+# Persistent shared HuggingFace cache for headroom (downloaded at runtime,
+# not source). One copy shared by all instances.
+hf-cache-runtime/

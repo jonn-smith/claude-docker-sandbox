@@ -81,6 +81,44 @@ __resolve_dir() {
 }
 SCRIPT_DIR=$(__resolve_dir)
 
+# Persistent, SHARED HuggingFace cache for headroom's kompress model. The
+# container's own ~/.cache is ephemeral (dies with --rm), so without this
+# every launch re-downloads the model and races start_script's readiness
+# probe. One host dir, bind-mounted into every instance's
+# ~/.cache/huggingface — the model is identical across instances/projects,
+# so it's downloaded once ever and shared by all. Gitignored.
+HF_CACHE_DIR="${SCRIPT_DIR}/hf-cache-runtime"
+# The model headroom 0.24.0 pulls. Update if the pinned headroom version
+# changes the model it loads.
+HEADROOM_MODEL_REPO="chopratejas/kompress-base"
+
+# Ensure headroom's model is present in the shared host cache. Idempotent:
+# returns immediately if already cached; otherwise downloads it once via a
+# throwaway container (no host python/HF deps needed, uses the same env
+# headroom does). uid-fixup remaps claude -> HOST_UID, so files land owned
+# by the host user and the real container reads them cleanly.
+ensure_headroom_model() {
+  local slug="models--${HEADROOM_MODEL_REPO/\//--}"
+  mkdir -p "${HF_CACHE_DIR}"
+  if [ -d "${HF_CACHE_DIR}/hub/${slug}/snapshots" ] \
+     && [ -n "$(ls -A "${HF_CACHE_DIR}/hub/${slug}/snapshots" 2>/dev/null)" ]; then
+    echo "headroom-model: cached (${HEADROOM_MODEL_REPO})"
+    return 0
+  fi
+  echo "headroom-model: downloading ${HEADROOM_MODEL_REPO} into ${HF_CACHE_DIR#$SCRIPT_DIR/} (one-time, ~150MB)..."
+  if docker run --rm \
+       -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+       -v "${HF_CACHE_DIR}:/home/claude/.cache/huggingface" \
+       "claude-sandbox:${DOCKER_IMAGE_VERSION}" \
+       /opt/claude-venv/bin/python -c \
+       "from huggingface_hub import snapshot_download as s; s('${HEADROOM_MODEL_REPO}')"; then
+    echo "headroom-model: done."
+  else
+    echo "headroom-model: WARNING — prefetch failed; headroom will download at" >&2
+    echo "                container start instead (slower first launch)." >&2
+  fi
+}
+
 # Host OS branch. Most of the script is identical on Linux and macOS, but
 # a few host-only concerns differ (sysbox-runc availability, NVIDIA GPU
 # possibility, how the container reaches host-side fiss-mcp / vertex_proxy).
@@ -792,6 +830,14 @@ else
   [[ -n "$HDI_TARGET" ]] || HDI_TARGET="host-gateway"   # fall back to the keyword
 fi
 
+# Prefetch headroom's model into the shared cache so the container's
+# readiness probe doesn't race a cold-cache download. No-op when it's
+# already there, or when headroom is off.
+mkdir -p "${HF_CACHE_DIR}"
+if [[ "${HEADROOM:-0}" == "1" ]]; then
+  ensure_headroom_model
+fi
+
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
 # Note: not using `exec` so the EXIT trap can still fire to clean up the
 # host fiss-mcp process after the container exits.
@@ -804,6 +850,7 @@ docker run --rm -it \
   --name "${CONTAINER_NAME}" \
   "${MOUNTS[@]}" \
   --add-host=host.docker.internal:"${HDI_TARGET}" \
+  -v "${HF_CACHE_DIR}:/home/claude/.cache/huggingface" \
   ${RUNTIME_FLAG[@]+"${RUNTIME_FLAG[@]}"} \
   ${SHM_FLAGS[@]+"${SHM_FLAGS[@]}"} \
   ${GPU_FLAGS[@]+"${GPU_FLAGS[@]}"} \

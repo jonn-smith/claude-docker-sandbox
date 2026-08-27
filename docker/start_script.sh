@@ -36,21 +36,36 @@ if [[ "${HEADROOM:-0}" == "1" ]]; then
   HR_PID=$!
   trap 'kill "${HR_PID}" 2>/dev/null || true' EXIT
 
+  # 90s, not 25s: on a cold HuggingFace cache headroom downloads its
+  # kompress model during init before /stats responds, which easily
+  # exceeds 25s on an unauthenticated/slow connection. The launcher warms
+  # a persistent host-side cache (mounted at ~/.cache/huggingface) so this
+  # download normally happens once ever, but the longer window covers the
+  # very first run and slow networks.
   echo -n "Waiting for headroom proxy to start "
-  for _ in {1..25}; do
+  for _ in {1..90}; do
     echo -n "."
     curl -fsS "http://127.0.0.1:${HEADROOM_PORT}/stats" >/dev/null 2>&1 && break
     sleep 1
   done
 
-  if ! curl -fsS "http://127.0.0.1:${HEADROOM_PORT}/stats" >/dev/null 2>&1; then
-    echo "headroom: failed to come up — see /tmp/headroom.log" >&2
+  if curl -fsS "http://127.0.0.1:${HEADROOM_PORT}/stats" >/dev/null 2>&1; then
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:${HEADROOM_PORT}"
+    echo "headroom: ON  ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}"
+  else
+    # Non-fatal (was: exit 1). A slow/broken headroom must not kill the
+    # whole session — fall back to talking to the API directly. Vertex
+    # routing, if configured, still applies.
+    echo "headroom: WARNING — did not come up in 90s; launching WITHOUT it." >&2
     tail -20 /tmp/headroom.log >&2 || true
-    exit 1
+    kill "${HR_PID}" 2>/dev/null || true
+    if [[ -n "${ANTHROPIC_TARGET_API_URL:-}" ]]; then
+      export ANTHROPIC_BASE_URL="${ANTHROPIC_TARGET_API_URL}"
+      echo "headroom: OFF (failed)  vertex direct  ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}"
+    else
+      echo "headroom: OFF (failed)  talking to api.anthropic.com directly"
+    fi
   fi
-
-  export ANTHROPIC_BASE_URL="http://127.0.0.1:${HEADROOM_PORT}"
-  echo "headroom: ON  ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}"
 else
   if [[ -n "${ANTHROPIC_TARGET_API_URL:-}" ]]; then
     # No headroom layer — claude talks to vertex_proxy directly. Skip the
