@@ -21,18 +21,31 @@ REPO_URL="https://github.com/broadinstitute/fiss-mcp.git"
 FISS_MCP_REF="1.0.5"
 FISS_MCP_REF_COMMIT="ce8097b2126c17166eab565eea5fad8ca9cb5295"
 
-# Python 3.10+ check (fiss-mcp requires >=3.10).
-PY="${PYTHON:-python3}"
-if ! command -v "$PY" >/dev/null 2>&1; then
-  echo "host_fiss_mcp/install.sh: python3 not found on PATH" >&2
+# Pick a Python >=3.10 (fiss-mcp requires it). A bare `python3` is not
+# enough: on some hosts the user's `python3` is an older conda/pyenv shim
+# ahead of the system one on PATH (seen: python3=3.9 while
+# /usr/bin/python3.12 exists). Probe the explicit minor-version names too,
+# and take the first candidate that satisfies >=3.10. $PYTHON overrides.
+py_ok() {  # prints "maj min" if $1 is a runnable python, else nothing
+  command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null
+}
+PY=""
+for cand in "${PYTHON:-}" python3.13 python3.12 python3.11 python3.10 python3; do
+  [[ -n "$cand" ]] || continue
+  read -r maj min < <(py_ok "$cand") || continue
+  [[ -n "${maj:-}" ]] || continue
+  if [[ "$maj" -gt 3 ]] || { [[ "$maj" -eq 3 ]] && [[ "$min" -ge 10 ]]; }; then
+    PY="$cand"; PY_VER="${maj}.${min}"; break
+  fi
+done
+if [[ -z "$PY" ]]; then
+  echo "host_fiss_mcp/install.sh: need python >=3.10; none found." >&2
+  echo "  Tried: \$PYTHON, python3.13, python3.12, python3.11, python3.10, python3." >&2
+  echo "  Install one (e.g. apt install python3.12) or set PYTHON=/path/to/python3.12." >&2
   exit 1
 fi
-PY_VER=$("$PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PY_MAJ=${PY_VER%%.*}; PY_MIN=${PY_VER##*.}
-if [[ "$PY_MAJ" -lt 3 ]] || { [[ "$PY_MAJ" -eq 3 ]] && [[ "$PY_MIN" -lt 10 ]]; }; then
-  echo "host_fiss_mcp/install.sh: python ${PY_VER} too old; fiss-mcp needs >=3.10" >&2
-  exit 1
-fi
+echo "host_fiss_mcp: using ${PY} (${PY_VER})"
 
 if [[ ! -d "${SRC_DIR}/.git" ]]; then
   echo "host_fiss_mcp: cloning fiss-mcp into ${SRC_DIR} (ref=${FISS_MCP_REF})"
