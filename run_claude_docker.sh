@@ -830,6 +830,11 @@ resolve_named_session() {
   done
   shopt -u nullglob
   [ -n "$newest" ] && basename "$newest" .jsonl
+  # Explicit success: without this the function returns 1 when there is no
+  # match (the `&&` short-circuits), and under `set -e` the calling
+  # `sid=$(resolve_named_session ...)` assignment would abort the launcher
+  # on any first run of a new instance.
+  return 0
 }
 
 CLAUDE_DEFAULT_ARGS=()
@@ -849,7 +854,7 @@ case " $* " in
     : ;;   # caller controls session identity
   *)
     if [[ -n "${CLAUDE_SANDBOX_INSTANCE:-}" ]]; then
-      _named_sid="$(resolve_named_session "${CLAUDE_SANDBOX_INSTANCE}" "${SESSION_PROJECTS_DIR}")"
+      _named_sid="$(resolve_named_session "${CLAUDE_SANDBOX_INSTANCE}" "${SESSION_PROJECTS_DIR}" || true)"
       if [[ -n "$_named_sid" ]]; then
         CLAUDE_DEFAULT_ARGS+=(--resume "$_named_sid")
         echo "session: resuming '${CLAUDE_SANDBOX_INSTANCE}' (${_named_sid})"
