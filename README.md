@@ -193,6 +193,8 @@ Fixed with a **persistent, shared** model cache:
 
 `hf-cache-runtime/` is gitignored and regenerates on demand. Delete it to force a fresh model download. If the pinned headroom version ever changes the model it loads, update `HEADROOM_MODEL_REPO` near the top of `run_claude_docker.sh`.
 
+**Faster first download (optional):** unauthenticated HuggingFace pulls are rate-limited. Set `HF_TOKEN` (a read token from <https://huggingface.co/settings/tokens>) in your `envs/env.<INSTANCE>.sh` and the one-time prefetch uses it — much faster on a cold cache. It's passed to the download container by name only (never printed, never baked into the image); unset means an anonymous download, which still works, just slower.
+
 ## Statusline badges
 
 The statusline is a single wrapper, `claude-sandbox-shared/.claude/hooks/caveman-statusline.sh`, that composes several segments into one line (Claude Code allows only one `statusLine.command`). It re-runs after each response, so the dynamic numbers stay current. A typical line:

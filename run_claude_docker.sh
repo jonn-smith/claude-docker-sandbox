@@ -105,9 +105,17 @@ ensure_headroom_model() {
     echo "headroom-model: cached (${HEADROOM_MODEL_REPO})"
     return 0
   fi
-  echo "headroom-model: downloading ${HEADROOM_MODEL_REPO} into ${HF_CACHE_DIR#$SCRIPT_DIR/} (one-time, ~150MB)..."
+  # Optional HuggingFace token to dodge unauthenticated rate limits (much
+  # faster on a cold pull). Set HF_TOKEN in your envs/env.<INSTANCE>.sh.
+  # Passed BY NAME (`-e HF_TOKEN`, no value) so the secret never appears in
+  # the docker argv / `ps`; docker reads it from this launcher's env.
+  # huggingface_hub picks up HF_TOKEN automatically. Empty -> anonymous.
+  local hf_auth=() authnote="anonymous"
+  if [[ -n "${HF_TOKEN:-}" ]]; then hf_auth=(-e HF_TOKEN); authnote="authenticated"; fi
+  echo "headroom-model: downloading ${HEADROOM_MODEL_REPO} into ${HF_CACHE_DIR#$SCRIPT_DIR/} (one-time, ~150MB, ${authnote})..."
   if docker run --rm \
        -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+       "${hf_auth[@]+"${hf_auth[@]}"}" \
        -v "${HF_CACHE_DIR}:/home/claude/.cache/huggingface" \
        "claude-sandbox:${DOCKER_IMAGE_VERSION}" \
        /opt/claude-venv/bin/python -c \

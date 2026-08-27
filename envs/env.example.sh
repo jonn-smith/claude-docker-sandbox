@@ -104,5 +104,14 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 #export CLAUDE_JOURNAL_AUDIT=1
 #export CLAUDE_JOURNAL_AUDIT_FILE=/workspace/.journal-audit.log
 
+# Optional HuggingFace token. Only used for the one-time headroom model
+# prefetch (HEADROOM=1). Unauthenticated HF downloads get rate-limited and
+# are slow on a cold cache; a read token dodges that. Get one at
+# https://huggingface.co/settings/tokens (read scope is enough). Passed to
+# the download only, by name (never printed, never baked into the image).
+# Unset → anonymous download (still works, just slower the first time).
+#
+#export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
 unset __ENV_SCRIPT_DIR
 
