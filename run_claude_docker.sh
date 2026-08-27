@@ -802,11 +802,57 @@ fi
 #       so sessions are identifiable without typing -n every launch.
 #   --dangerously-skip-permissions   disposable, host-isolated sandbox built
 #       for unattended work — don't make the operator type this every time.
+# Find the most-recent claude session whose display name (customTitle,
+# what `claude --name` sets) equals $1, under the projects dir $2. Prints
+# its session id (the .jsonl basename) or nothing. Safe on first launch:
+# missing dir / no match -> prints nothing, returns 0.
+resolve_named_session() {
+  local name="$1" projdir="$2"
+  [ -d "$projdir" ] || return 0
+  local f title mt newest="" newest_mt=0
+  shopt -s nullglob
+  # projects/<encoded-cwd>/<uuid>.jsonl — one level deep = real sessions
+  # (subagent shards live deeper and carry no customTitle).
+  for f in "$projdir"/*/*.jsonl; do
+    title=$(grep -m1 -o '"customTitle":"[^"]*"' "$f" 2>/dev/null \
+            | sed 's/.*"customTitle":"//; s/"$//')
+    [ "$title" = "$name" ] || continue
+    mt=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+    if [ "$mt" -gt "$newest_mt" ]; then newest_mt=$mt; newest=$f; fi
+  done
+  shopt -u nullglob
+  [ -n "$newest" ] && basename "$newest" .jsonl
+}
+
 CLAUDE_DEFAULT_ARGS=()
+
+# Session identity. Auto-resume the session named after this instance if one
+# exists; otherwise start fresh, named after the instance. Skipped entirely
+# if the caller passed their own name/resume/continue flag (they win). First
+# launch (no matching session, or no projects dir yet) falls through to
+# --name with no error.
+if [[ "$USE_SHARED" == "1" ]]; then
+  SESSION_PROJECTS_DIR="${SHARED_HOME}/.claude/projects"
+else
+  SESSION_PROJECTS_DIR="${SANDBOX_HOME}/.claude/projects"
+fi
 case " $* " in
-  *" --name "*|*" -n "*) : ;;
-  *) [[ -n "${CLAUDE_SANDBOX_INSTANCE:-}" ]] && CLAUDE_DEFAULT_ARGS+=(--name "${CLAUDE_SANDBOX_INSTANCE}") ;;
+  *" --name "*|*" -n "*|*" --resume "*|*" --continue "*|*" -c "*|*" --session-id "*)
+    : ;;   # caller controls session identity
+  *)
+    if [[ -n "${CLAUDE_SANDBOX_INSTANCE:-}" ]]; then
+      _named_sid="$(resolve_named_session "${CLAUDE_SANDBOX_INSTANCE}" "${SESSION_PROJECTS_DIR}")"
+      if [[ -n "$_named_sid" ]]; then
+        CLAUDE_DEFAULT_ARGS+=(--resume "$_named_sid")
+        echo "session: resuming '${CLAUDE_SANDBOX_INSTANCE}' (${_named_sid})"
+      else
+        CLAUDE_DEFAULT_ARGS+=(--name "${CLAUDE_SANDBOX_INSTANCE}")
+        echo "session: no prior '${CLAUDE_SANDBOX_INSTANCE}' — starting fresh, named"
+      fi
+    fi
+    ;;
 esac
+
 case " $* " in
   *" --dangerously-skip-permissions "*) : ;;
   *) CLAUDE_DEFAULT_ARGS+=(--dangerously-skip-permissions) ;;
