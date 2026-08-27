@@ -776,6 +776,22 @@ esac
 
 # Make it so. Any args ($@) are passed to `claude` inside the container —
 # e.g. --resume <id>, --continue, --dangerously-skip-permissions.
+# Resolve the host.docker.internal target for --add-host. The `host-gateway`
+# keyword relies on the daemon being able to resolve it to an IP; on some
+# hosts (custom bridge / daemon config) it fails with
+#   could not parse extra host IP invalid IP: ParseAddr("invalid IP")
+# On Linux we already know the real gateway IP (resolve_host_bind_ip returns
+# the docker bridge gateway — the same address fiss-mcp/vertex bind to), so
+# pass it explicitly and sidestep the keyword. On macOS keep `host-gateway`:
+# Docker Desktop resolves it, and resolve_host_bind_ip returns 127.0.0.1
+# which would be the container's own loopback, not the host.
+if [[ "$IS_DARWIN" == "1" ]]; then
+  HDI_TARGET="host-gateway"
+else
+  HDI_TARGET="$(resolve_host_bind_ip 2>/dev/null || true)"
+  [[ -n "$HDI_TARGET" ]] || HDI_TARGET="host-gateway"   # fall back to the keyword
+fi
+
 # To drop into a shell instead, swap `claude "$@"` below for `/bin/bash`.
 # Note: not using `exec` so the EXIT trap can still fire to clean up the
 # host fiss-mcp process after the container exits.
@@ -787,7 +803,7 @@ esac
 docker run --rm -it \
   --name "${CONTAINER_NAME}" \
   "${MOUNTS[@]}" \
-  --add-host=host.docker.internal:host-gateway \
+  --add-host=host.docker.internal:"${HDI_TARGET}" \
   ${RUNTIME_FLAG[@]+"${RUNTIME_FLAG[@]}"} \
   ${SHM_FLAGS[@]+"${SHM_FLAGS[@]}"} \
   ${GPU_FLAGS[@]+"${GPU_FLAGS[@]}"} \
