@@ -10,11 +10,25 @@ DOCKER_IMAGE_VERSION=0.0.1
 # `:-` default — under `set -u`, a bare ${VAR} on an unset var errors with
 # "unbound variable" before our friendly message ever runs. ${VAR:-} expands
 # to empty so the -z test fires the helpful branch instead.
-if [[ -z "${CLAUDE_SANDBOX_PROJECTS_DIR:-}" ]] || [[ ! -d "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]]; then
-    echo "CRITICAL ERROR: CLAUDE_SANDBOX_PROJECTS_DIR is not set, is empty, or does not exist." >&2
+if [[ -z "${CLAUDE_SANDBOX_PROJECTS_DIR:-}" ]]; then
+    echo "CRITICAL ERROR: CLAUDE_SANDBOX_PROJECTS_DIR is not set or is empty." >&2
     echo "                You must set this env var before starting the docker image." >&2
     echo "                Try: source envs/env.example.sh  (or your envs/env.<INSTANCE>.sh)" >&2
     exit 1
+fi
+# Auto-create the workspace dir if the env's path doesn't exist yet (matches
+# what env.example.sh documents — "auto-created on first use"). A new
+# per-project env can point at a workspace subdir that isn't there yet;
+# create it rather than refusing to launch. Still fatal if creation fails
+# (e.g. a typo'd path under a read-only parent).
+if [[ ! -d "${CLAUDE_SANDBOX_PROJECTS_DIR}" ]]; then
+    echo "workspace: creating ${CLAUDE_SANDBOX_PROJECTS_DIR} (did not exist)"
+    if ! mkdir -p "${CLAUDE_SANDBOX_PROJECTS_DIR}" 2>/dev/null; then
+        echo "CRITICAL ERROR: could not create CLAUDE_SANDBOX_PROJECTS_DIR at" >&2
+        echo "                ${CLAUDE_SANDBOX_PROJECTS_DIR}" >&2
+        echo "                Check the path and parent-directory permissions." >&2
+        exit 1
+    fi
 fi
 
 if [[ -z "${CLAUDE_SANDBOX_CONTEXT_DIR:-}" ]] || [[ ! -d "${CLAUDE_SANDBOX_CONTEXT_DIR}" ]]; then
