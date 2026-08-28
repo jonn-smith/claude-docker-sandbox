@@ -3,11 +3,17 @@
 //
 // Resolution order for default mode:
 //   1. CAVEMAN_DEFAULT_MODE environment variable
-//   2. Config file defaultMode field:
+//   2. Repo-local config (checked-in, per-project default):
+//      - <cwd>/.caveman/config.json
+//      - <cwd>/.caveman.json
+//      Walks up from process.cwd() to the nearest ancestor containing one of
+//      these (stops at filesystem root). Lets a team pin a project's default
+//      mode without polluting every contributor's user-level config or env.
+//   3. User config file defaultMode field:
 //      - $XDG_CONFIG_HOME/caveman/config.json (any platform, if set)
 //      - ~/.config/caveman/config.json (macOS / Linux fallback)
 //      - %APPDATA%\caveman\config.json (Windows fallback)
-//   3. 'full'
+//   4. 'full'
 
 const fs = require('fs');
 const path = require('path');
@@ -36,25 +42,76 @@ function getConfigPath() {
   return path.join(getConfigDir(), 'config.json');
 }
 
-function getDefaultMode() {
+// Walk up from `start` looking for a repo-local caveman config. Returns the
+// absolute path of the first match, or null. Stops at the filesystem root.
+// Candidates per dir (first wins): .caveman/config.json, .caveman.json.
+//
+// Bounded to 64 levels to defend against symlink cycles on pathological mounts.
+function findRepoConfigPath(start) {
+  try {
+    let dir = path.resolve(start || process.cwd());
+    const candidates = ['.caveman/config.json', '.caveman.json'];
+    for (let i = 0; i < 64; i++) {
+      for (const rel of candidates) {
+        const p = path.join(dir, rel);
+        try {
+          const st = fs.lstatSync(p);
+          // Refuse symlinks — symmetric with safeWriteFlag/readFlag policy.
+          if (st.isSymbolicLink() || !st.isFile()) continue;
+          return p;
+        } catch (e) {
+          // not present, try next candidate
+        }
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  } catch (e) {
+    // Defensive: any cwd / fs failure → no repo config
+  }
+  return null;
+}
+
+function readModeFromConfigFile(configPath) {
+  try {
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(raw);
+    if (config && config.defaultMode &&
+        VALID_MODES.includes(String(config.defaultMode).toLowerCase())) {
+      return String(config.defaultMode).toLowerCase();
+    }
+  } catch (e) {
+    // Missing / unreadable / invalid JSON → caller falls through
+  }
+  return null;
+}
+
+// startDir overrides the cwd the repo-config walk starts from (default
+// process.cwd(), same as findRepoConfigPath's own fallback) — lets a caller
+// resolve the mode for a directory other than its own process cwd (#634:
+// the UserPromptSubmit hook's stdin carries the session's cwd, which can
+// differ from the hook process's cwd). Every other resolution step is
+// cwd-independent, so only the repo-config walk takes it.
+function getDefaultMode(startDir) {
   // 1. Environment variable (highest priority)
   const envMode = process.env.CAVEMAN_DEFAULT_MODE;
   if (envMode && VALID_MODES.includes(envMode.toLowerCase())) {
     return envMode.toLowerCase();
   }
 
-  // 2. Config file
-  try {
-    const configPath = getConfigPath();
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (config.defaultMode && VALID_MODES.includes(config.defaultMode.toLowerCase())) {
-      return config.defaultMode.toLowerCase();
-    }
-  } catch (e) {
-    // Config file doesn't exist or is invalid — fall through
+  // 2. Repo-local config (checked-in, per-project default)
+  const repoConfigPath = findRepoConfigPath(startDir);
+  if (repoConfigPath) {
+    const repoMode = readModeFromConfigFile(repoConfigPath);
+    if (repoMode) return repoMode;
   }
 
-  // 3. Default
+  // 3. User config file
+  const userMode = readModeFromConfigFile(getConfigPath());
+  if (userMode) return userMode;
+
+  // 4. Default
   return 'full';
 }
 
@@ -78,6 +135,14 @@ function getDefaultMode() {
 // Set CAVEMAN_DEBUG=1 to emit stderr diagnostics when flag writes are refused.
 //
 // Silent-fails on any filesystem error — the flag is best-effort.
+// Blocking sleep with no child process and no busy-wait. Used only to space
+// out rename retries under Windows lock contention.
+function sleepMs(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch (e) { /* SharedArrayBuffer unavailable — skip the backoff */ }
+}
+
 function safeWriteFlag(flagPath, content) {
   const debug = process.env.CAVEMAN_DEBUG === '1';
   try {
@@ -127,18 +192,60 @@ function safeWriteFlag(flagPath, content) {
       if (e.code !== 'ENOENT') return;
     }
 
-    const tempPath = path.join(realFlagDir, `.caveman-active.${process.pid}.${Date.now()}`);
-    const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
-    const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW;
-    let fd;
+    // tempPath is hoisted above the try so the finally below can always find
+    // it. On Windows, renameSync onto an existing target throws EPERM/EBUSY/
+    // EACCES/EEXIST when another process (statusline read, a concurrent
+    // session's hook) holds the file open without FILE_SHARE_DELETE —
+    // without the retry + guaranteed cleanup here, every such miss left an
+    // orphaned .caveman-active.<pid>.<ts> file behind (#511/#578/#657).
+    let tempPath;
     try {
-      fd = fs.openSync(tempPath, flags, 0o600);
-      fs.writeSync(fd, String(content));
-      try { fs.fchmodSync(fd, 0o600); } catch (e) { /* best-effort on Windows */ }
+      tempPath = path.join(realFlagDir, `.caveman-active.${process.pid}.${Date.now()}`);
+      const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
+      const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW;
+      let fd;
+      try {
+        fd = fs.openSync(tempPath, flags, 0o600);
+        fs.writeSync(fd, String(content));
+        try { fs.fchmodSync(fd, 0o600); } catch (e) { /* best-effort on Windows */ }
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+      }
+
+      // Retry brief lock contention a few times, backing off between attempts.
+      // Three synchronous attempts with no delay all complete inside a few
+      // microseconds, so whichever handle blocked the first (a statusline read,
+      // a concurrent session's hook, an AV scan) is still held for the other
+      // two — effectively one attempt with two extra syscalls. Sleep for real:
+      // Atomics.wait blocks this thread without pulling in a child process,
+      // which is what a hook budget can least afford.
+      let renamed = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          fs.renameSync(tempPath, realFlagPath);
+          renamed = true;
+          break;
+        } catch (e) {
+          const transient = e.code === 'EPERM' || e.code === 'EBUSY' ||
+                             e.code === 'EACCES' || e.code === 'EEXIST';
+          if (!transient) throw e;
+          if (attempt < 2) sleepMs(10 * (attempt + 1));
+        }
+      }
+      if (!renamed && debug) {
+        process.stderr.write('[caveman] safeWriteFlag: rename contended after 3 attempts; flag not updated this write\n');
+      }
     } finally {
-      if (fd !== undefined) fs.closeSync(fd);
+      if (tempPath) {
+        try {
+          fs.unlinkSync(tempPath);
+        } catch (error) {
+          if (debug && error.code !== 'ENOENT') {
+            process.stderr.write(`[caveman] safeWriteFlag: failed to remove temp flag ${tempPath}: ${error.message}\n`);
+          }
+        }
+      }
     }
-    fs.renameSync(tempPath, realFlagPath);
   } catch (e) {
     // Silent fail — flag is best-effort
   }
@@ -248,6 +355,29 @@ function appendFlag(filePath, line) {
   }
 }
 
+// Mode-transition log (#601). Whenever the active-mode flag actually changes,
+// append {ts, mode, prev} to $CLAUDE_CONFIG_DIR/.caveman-mode-log.jsonl so
+// caveman-stats can attribute output tokens to the mode that was active when
+// each message was generated, instead of whatever mode the flag holds at
+// stats time. mode/prev are a VALID_MODES string or null (null = caveman off).
+// prev lets stats attribute messages that predate the first logged transition
+// of a session. No-op when the mode is unchanged; best-effort like all flag IO.
+const MODE_LOG_BASENAME = '.caveman-mode-log.jsonl';
+
+function recordModeChange(claudeDir, newMode) {
+  try {
+    const current = readFlag(path.join(claudeDir, '.caveman-active'));
+    const next = newMode || null;
+    if ((current || null) === next) return;
+    appendFlag(
+      path.join(claudeDir, MODE_LOG_BASENAME),
+      JSON.stringify({ ts: Date.now(), mode: next, prev: current || null })
+    );
+  } catch (e) {
+    // Silent fail — the log is best-effort
+  }
+}
+
 // Symlink-safe history read. Returns lines (untrimmed) or empty array on any
 // anomaly. Caller is responsible for parsing JSON. Does NOT enforce a size cap
 // the way readFlag does — history is expected to grow with use.
@@ -271,4 +401,4 @@ function readHistory(filePath) {
   }
 }
 
-module.exports = { getDefaultMode, getConfigDir, getConfigPath, VALID_MODES, safeWriteFlag, readFlag, appendFlag, readHistory };
+module.exports = { getDefaultMode, getConfigDir, getConfigPath, findRepoConfigPath, VALID_MODES, safeWriteFlag, readFlag, appendFlag, readHistory, recordModeChange, MODE_LOG_BASENAME };

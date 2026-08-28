@@ -219,7 +219,7 @@ check_pin() {
   echo
 }
 # Keep in sync with claude-sandbox-shared/.claude/PLUGIN_PINS.md.
-check_pin caveman 63a91ecadbf4c4719a4602a5abb00883f9966034
+check_pin caveman b5ec6351396b643a17cbbec4a6eee8b3fb9dd782
 check_pin ponytail bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
 
 # Run claude. Sandbox launch defaults (--name, --dangerously-skip-permissions)
