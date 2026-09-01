@@ -19,7 +19,24 @@ README = product front door. Non-technical people read it to decide if caveman w
 
 ## Project overview
 
-Caveman makes AI coding agents respond in compressed caveman-style prose — cuts ~65-75% output tokens, full technical accuracy. Ships as Claude Code plugin, Codex plugin, Gemini CLI extension, agent rule files for Cursor, Windsurf, Cline, Copilot, 40+ others via `npx skills`.
+Caveman makes AI coding agents respond in compressed caveman-style prose while preserving technical substance, code, commands, and exact errors. Publish no reduction or quality-equivalence percentage without a committed reviewed benchmark. Ships as Claude Code plugin, Codex plugin, Gemini CLI extension, and agent rule files for Cursor, Windsurf, Cline, Copilot, and other profiles via `npx skills`.
+
+## Repository routing
+
+This repo is source of truth for Caveman skills, Engine, and MV3 directive
+extension. Agent SDK + initializer work belongs in
+`/Users/julb/Desktop/GitHub/caveman-agent-sdk`
+(`JuliusBrussee/caveman-agent-sdk`). Browse driver/MCP/benchmark/plugin work
+belongs in `/Users/julb/Desktop/GitHub/caveman-browse`
+(`JuliusBrussee/caveman-browse`). Matching `packages/agent/`,
+`packages/create-caveman-agent/`, and `browse/` directories here are
+historical/consumer copies; edit only for pinned integration, migration/removal,
+or an explicitly requested cross-repo sync.
+
+Visibility is separate from ownership: this repo and `caveman-browse` are
+public now; `caveman-agent-sdk` is private during development and planned for
+public release after its release gates; Caveman-Cloud remains private
+commercial source.
 
 ---
 
@@ -51,6 +68,7 @@ caveman/
 │   └── cavecrew/{SKILL.md, README.md}
 │
 ├── agents/                      # cavecrew subagents (single source — kept at root for plugin auto-discovery)
+│   └── docs/                    # profile-registry docs — NOT agents (see note below)
 ├── commands/                    # Codex/Gemini TOML command stubs (root for plugin auto-discovery)
 │
 ├── src/                         # Internal source — not auto-discovered by plugin
@@ -58,6 +76,22 @@ caveman/
 │   ├── rules/                   # Auto-activation rule body (single source)
 │   ├── tools/                   # caveman-init.js (per-repo rule writer)
 │   └── mcp-servers/             # caveman-shrink npm-published MCP middleware
+│
+├── packages/                    # Current public packages
+│   ├── agent/                   # historical copy; source = caveman-agent-sdk
+│   ├── create-caveman-agent/    # historical copy; source = caveman-agent-sdk
+│   ├── cli/                     # @caveman-ai/cli
+│   ├── pi-extension/            # @caveman-ai/pi — native Pi extension (bundled into the CLI, published on `pi-v*` tags)
+│   ├── sdk/                     # TypeScript + Python gateway clients
+│   ├── kit/ · graders/          # Honesty UI surfaces + fail-closed eval graders
+│   ├── mastra/ · subagent-tax/  # Mastra adapter + local harness-prefix benchmark
+│   └── shared/                  # Contracts + binary installer
+├── engine/ · proxy/             # BSL local compression runtime + provider proxy
+├── cacheengine/ · rewriter/     # Standalone cache planner + prompt rewriter
+├── mcp/ · mem/ · shrink/        # Recovery tools, memory, output compression
+├── browse/                      # consumer copy; source = caveman-browse
+├── extension/                   # MV3 extension source
+├── shared/                       # Provider catalog + BSL platform libraries
 │
 ├── .claude-plugin/              # Claude Code plugin manifest (REQUIRED at root)
 ├── plugins/caveman/             # Claude Code plugin distribution (CI-mirrored)
@@ -91,11 +125,53 @@ caveman/
 | `skills/caveman-help/SKILL.md` | Quick-reference card. One-shot display, not a persistent mode. |
 | `skills/caveman-compress/SKILL.md` | Compress sub-skill behavior. |
 | `skills/cavecrew/SKILL.md` | Cavecrew decision guide — when to delegate to caveman subagents vs vanilla. Edit only here. |
+| `skills/{caveman-setup,caveman-discover,caveman-learn,caveman-manage,caveman-optimize,caveman-explore,caveman-evidence-review}/SKILL.md` | Engine/proxy driver skills. Ship with the plugin (see the auto-discovery note below). |
+| `skills/{investigate-first,lean-build,surgical-patch,safe-refactor,migration,verify-and-stop}/SKILL.md` | Token-discipline work patterns — same goal as caveman prose (fewer output tokens) applied to code volume rather than wording. Deliberately un-branded so they read as generic patterns to the model. Ship with the plugin. |
 | `agents/cavecrew-investigator.md` | Read-only locator subagent (haiku). Output contract: `path:line — symbol — note`. |
 | `agents/cavecrew-builder.md` | Surgical 1-2 file editor subagent. Refuses 3+ file scope. |
 | `agents/cavecrew-reviewer.md` | Diff/file reviewer subagent (haiku). One-line findings with severity emoji. |
 | `src/plugins/opencode/plugin.js` | opencode native plugin. ESM Bun module — `session.created` writes flag, `tui.prompt.append` parses slash/natural-language activation and appends per-prompt reinforcement. Reuses `caveman-config.js` via `createRequire`. |
 | `src/plugins/opencode/commands/*.md` | Six opencode slash-command prompt templates (`/caveman`, `/caveman-{commit,review,compress,stats,help}`). |
+
+### `skills/` is auto-discovered wholesale — every subdirectory ships
+
+`.claude-plugin/marketplace.json` sets `"source": "./"`, so the plugin root IS
+the repo root, and Claude Code auto-discovers **every** `skills/*/SKILL.md`
+with no `skills` key in `plugin.json` to gate it. Adding a directory under
+`skills/` therefore installs it into every plugin user's agent, where its
+`description` competes for activation on ordinary work.
+
+There is no allowlist. Before adding a directory here, decide whether it
+should reach end users; if not, it belongs under `packages/` or another root.
+Keep the two tables above and the README "What you get" table in sync with the
+actual directory listing — `ls skills/` is the source of truth.
+
+### `agents/*.md` is auto-discovered too — and `plugin.json` must NOT list them
+
+Same mechanism, sharper edge. `plugin.json` used to carry an explicit
+`"agents": ["./agents/cavecrew-*.md"]` array. On Claude Code 2.1.235 that array
+loads **zero** agents — `claude plugin details caveman` reports `Agents (0)`
+with it and `Agents (3)` without it, so the three cavecrew subagents the
+`cavecrew` skill delegates to did not exist for any plugin user. The docs say
+`string | string[]` is valid and a directory string is rejected outright
+(`agents: Invalid input`), so the default `agents/` scan is the only path that
+works. Do not re-add the key.
+
+Consequence: **every top-level `.md` in `agents/` becomes a subagent**, named
+from its frontmatter or filename. `agents/AGENTS.md` and `agents/CLAUDE.md`
+shipped as bogus subagents called `AGENTS` and `CLAUDE`; they now live in
+`agents/docs/`, which the scan does not recurse into. Put non-agent markdown
+there. `tests/verify_repo.py` fails the build on either regression.
+
+### `commands/*.md` shadows same-named skills — keep the `.md` stubs unique
+
+Claude Code loads `commands/*.md` as flat skills alongside `skills/*/SKILL.md`,
+so a stub sharing a skill's name registers that name twice. `caveman.md`,
+`caveman-commit.md`, `caveman-review.md` and `caveman-stats.md` each duplicated
+a real skill — a 3-line stub competing with the full ruleset for the same slash
+command — and were removed. The `.toml` stubs are Codex/Gemini-only and are not
+scanned, so `commands/` keeps one `.md`: `caveman-init.md`, which has no skill
+twin. Guarded by `tests/verify_repo.py`.
 
 ### Auto-generated / auto-synced — do not edit directly
 
@@ -154,7 +230,8 @@ All hooks honor `CLAUDE_CONFIG_DIR` for non-default Claude Code config locations
 ### `src/hooks/caveman-config.js` — shared module
 
 Exports:
-- `getDefaultMode()` — resolves default mode from `CAVEMAN_DEFAULT_MODE` env var, then `$XDG_CONFIG_HOME/caveman/config.json` / `~/.config/caveman/config.json` / `%APPDATA%\caveman\config.json`, then `'full'`
+- `getDefaultMode()` — resolves default mode in order: `CAVEMAN_DEFAULT_MODE` env var → repo-local config (`<cwd>/.caveman/config.json` or `<cwd>/.caveman.json`, walking up to the filesystem root) → user config (`$XDG_CONFIG_HOME/caveman/config.json` / `~/.config/caveman/config.json` / `%APPDATA%\caveman\config.json`) → `'full'`. The env var short-circuits before any cwd walk. Repo-local config lets a team check in a per-project default without polluting every contributor's env or user config.
+- `findRepoConfigPath(start)` — walks up from `start` (default `process.cwd()`) looking for the first `.caveman/config.json` or `.caveman.json`. Bounded to 64 ancestors. Refuses symlinked files (symmetric with `safeWriteFlag` / `readFlag`).
 - `safeWriteFlag(flagPath, content)` — symlink-safe flag write. Refuses if flag target or its immediate parent is a symlink. Opens with `O_NOFOLLOW` where supported. Atomic temp + rename. Creates with `0600`. Protects against local attackers replacing the predictable flag path with a symlink to clobber files writable by the user. Used by both write hooks. Silent-fails on all filesystem errors.
 
 ### `src/hooks/caveman-activate.js` — SessionStart hook

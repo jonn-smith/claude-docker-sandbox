@@ -24,7 +24,7 @@ If the resolved SHA does NOT match the value in this file, do NOT bump — inves
 
 | Plugin / marketplace | mode | ref | expected commit SHA |
 |---|---|---|---|
-| [caveman](https://github.com/JuliusBrussee/caveman) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/` | `v1.8.2` | `63a91ecadbf4c4719a4602a5abb00883f9966034` |
+| [caveman](https://github.com/JuliusBrussee/caveman) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/` | `v2.3.1` | `b5ec6351396b643a17cbbec4a6eee8b3fb9dd782` |
 | [ponytail](https://github.com/DietrichGebert/ponytail) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/` | `v4.9.0` | `0a4dd63ad4541f4f655c4108a295916f3c1d8fda` |
 
 The `extraKnownMarketplaces.<name>` entries in `settings.json` are kept
@@ -39,6 +39,16 @@ clone from upstream at the same pinned ref.
 - A loud red `PIN DRIFT WARNING` banner with expected vs installed SHA — non-fatal, claude still launches.
 
 The probe is non-blocking; it never wipes the cache automatically.
+
+> **caveman is vendored PRUNED** (since v2.3.1). Caveman v2+ ships a large
+> BSL-licensed compression engine/proxy/SDKs (~27 MB) that we do not use —
+> we only use the MIT `/caveman` skill + its plugin hooks. So the vendored
+> tree keeps only the plugin-essential subset: `.claude-plugin/`, `src/`,
+> `skills/`, `commands/`, `agents/`, plus small top-level metadata
+> (README, LICENSE*, package.json, …). The runtime hooks require only Node
+> builtins + local `src/hooks/` files (verified), so the prune is safe. If
+> a future caveman moves plugin files out of those dirs, widen the keep-set.
+> ponytail is still vendored whole (it has no such engine bloat).
 
 ## Bump procedure (vendored)
 
