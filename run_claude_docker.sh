@@ -102,9 +102,11 @@ SCRIPT_DIR=$(__resolve_dir)
 # ~/.cache/huggingface — the model is identical across instances/projects,
 # so it's downloaded once ever and shared by all. Gitignored.
 HF_CACHE_DIR="${SCRIPT_DIR}/hf-cache-runtime"
-# The model headroom 0.24.0 pulls. Update if the pinned headroom version
-# changes the model it loads.
-HEADROOM_MODEL_REPO="chopratejas/kompress-base"
+# The model headroom pulls (kompress-v2-base since headroom 0.25 —
+# headroom 0.24 used kompress-base). Keep this in sync with the
+# headroom-ai pin in docker/Dockerfile; if a future headroom changes its
+# default model, update this repo id.
+HEADROOM_MODEL_REPO="chopratejas/kompress-v2-base"
 
 # Ensure headroom's model is present in the shared host cache. Idempotent:
 # returns immediately if already cached; otherwise downloads it once via a
@@ -126,14 +128,19 @@ ensure_headroom_model() {
   # huggingface_hub picks up HF_TOKEN automatically. Empty -> anonymous.
   local hf_auth=() authnote="anonymous"
   if [[ -n "${HF_TOKEN:-}" ]]; then hf_auth=(-e HF_TOKEN); authnote="authenticated"; fi
-  echo "headroom-model: downloading ${HEADROOM_MODEL_REPO} into ${HF_CACHE_DIR#$SCRIPT_DIR/} (one-time, ~150MB, ${authnote})..."
+  # allow_patterns: pull ONLY what headroom's default runtime loads — the
+  # weight-only int8 ONNX + tokenizer + small configs (~280MB) — not the
+  # full ~1.5GB repo (it also ships a 600MB fp32 ONNX, a 315MB safetensors,
+  # and a 302MB merged.pt for training / non-default backends we don't use).
+  # If a future headroom defaults to a different checkpoint, widen this.
+  echo "headroom-model: downloading ${HEADROOM_MODEL_REPO} into ${HF_CACHE_DIR#$SCRIPT_DIR/} (one-time, ~280MB, ${authnote})..."
   if docker run --rm \
        -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
        "${hf_auth[@]+"${hf_auth[@]}"}" \
        -v "${HF_CACHE_DIR}:/home/claude/.cache/huggingface" \
        "claude-sandbox:${DOCKER_IMAGE_VERSION}" \
        /opt/claude-venv/bin/python -c \
-       "from huggingface_hub import snapshot_download as s; s('${HEADROOM_MODEL_REPO}')"; then
+       "from huggingface_hub import snapshot_download as s; s('${HEADROOM_MODEL_REPO}', allow_patterns=['onnx/kompress-int8*','tokenizer*','*.json','adapter/**'])"; then
     echo "headroom-model: done."
   else
     echo "headroom-model: WARNING — prefetch failed; headroom will download at" >&2
