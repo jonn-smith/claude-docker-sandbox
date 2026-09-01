@@ -25,7 +25,7 @@ If the resolved SHA does NOT match the value in this file, do NOT bump — inves
 | Plugin / marketplace | mode | ref | expected commit SHA |
 |---|---|---|---|
 | [caveman](https://github.com/JuliusBrussee/caveman) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/caveman/` | `v2.3.1` | `b5ec6351396b643a17cbbec4a6eee8b3fb9dd782` |
-| [ponytail](https://github.com/DietrichGebert/ponytail) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/` | `v4.8.4` | `bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324` |
+| [ponytail](https://github.com/DietrichGebert/ponytail) | **vendored** at `claude-sandbox-shared/.claude/plugins/marketplaces/ponytail/` | `v4.9.0` | `0a4dd63ad4541f4f655c4108a295916f3c1d8fda` |
 
 The `extraKnownMarketplaces.<name>` entries in `settings.json` are kept
 as fallbacks — if a vendored tree is ever absent, claude-code can still
