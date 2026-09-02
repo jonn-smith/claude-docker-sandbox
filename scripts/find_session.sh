@@ -4,8 +4,8 @@
 # files; --resume takes the session ID (uuid), never the -n display name,
 # so this maps a name (or any substring) back to uuid(s).
 #
-#   ./find_session.sh <name-or-substring>     # search by customTitle / content
-#   ./find_session.sh --all                   # list every session everywhere
+#   scripts/find_session.sh <name-or-substring>     # search by customTitle / content
+#   scripts/find_session.sh --all                   # list every session everywhere
 #
 # Searches:
 #   persistent-states/<INSTANCE>/.claude/projects/        (current layout)
@@ -17,7 +17,7 @@
 # whole search silently. A miss should just skip the file.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NEEDLE="${1:-}"
 if [[ -z "$NEEDLE" ]]; then
   echo "usage: $(basename "$0") <session-name-or-substring> | --all" >&2
@@ -88,6 +88,6 @@ if [[ "$old_hit" -eq 1 ]]; then
   echo "NOTE: rows marked OLD are in the pre-refactor layout"
   echo "(claude-sandbox-persistent-state-<inst>/). The launcher now looks in"
   echo "persistent-states/<inst>/, so migrate first or it won't be found:"
-  echo "    ./migrate_env_layout.sh --go     # moves OLD dirs -> persistent-states/"
+  echo "    scripts/migrate_env_layout.sh --go     # moves OLD dirs -> persistent-states/"
   echo "then resume with CLAUDE_SANDBOX_INSTANCE set to that instance."
 fi
