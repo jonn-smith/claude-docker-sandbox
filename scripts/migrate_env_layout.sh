@@ -70,7 +70,24 @@ else
         [ -d "$d" ] || continue
         inst="${d##claude-sandbox-persistent-state-}"
         if [ -e "persistent-states/$inst" ]; then
-            say "  skip $d (persistent-states/$inst already exists)"
+            # Collision: an instance of the same name already ran in the new
+            # layout, so we can't just move the OLD dir over it. Silently
+            # skipping (the old behavior) STRANDS the OLD sessions — the
+            # launcher only reads persistent-states/, so those transcripts
+            # become unresumable. Instead MERGE the OLD projects/ (session
+            # transcripts) into the new dir without clobbering anything
+            # newer, and leave the OLD dir in place for manual review.
+            local_new="persistent-states/$inst"
+            n_old=$(find "$d/.claude/projects" -maxdepth 2 -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+            say "  MERGE $d -> $local_new (both exist; ${n_old} old transcript(s))"
+            if [ "$GO" = 1 ]; then
+                mkdir -p "$local_new/.claude/projects"
+                # -n = no-clobber: never overwrite a newer file in the target.
+                cp -rn "$d/.claude/projects/." "$local_new/.claude/projects/" 2>/dev/null || true
+                say "     merged projects/ (no-clobber). OLD dir left at $d — verify then remove."
+            else
+                say "     would merge projects/ into $local_new (no-clobber), keep $d"
+            fi
             continue
         fi
         move "$d" "persistent-states/$inst"
