@@ -113,5 +113,17 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 #
 #export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
+# GPU graphics capability (WebGPU / Vulkan / GL). Only relevant on a GPU
+# host — the launcher forwards the GPU with --gpus all and, by default,
+# only the compute,utility driver caps (CUDA). WebGPU (Dawn) and any
+# Vulkan/GL need the `graphics` cap so the NVIDIA runtime also mounts the
+# host driver's GL/Vulkan userspace (ICD json, libGLX_nvidia, …). That
+# widens the GPU-driver attack surface, so it's opt-in. Set to 1 for
+# WebGPU/graphics work; leave unset for the minimal compute-only surface.
+# (Note: GPU mode already runs under plain runc, not sysbox — see README.)
+# Power users can instead set NVIDIA_DRIVER_CAPABILITIES directly.
+#
+#export CLAUDE_SANDBOX_GPU_GRAPHICS=1
+
 unset __ENV_SCRIPT_DIR
 

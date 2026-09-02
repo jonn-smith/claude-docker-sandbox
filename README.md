@@ -500,6 +500,23 @@ Leave `CLAUDE_NOTIFY_EMAIL` unset to disable entirely. Requires a working outbou
 - **Switch Java versions**: change the `FROM eclipse-temurin:17-jdk AS temurin` line to e.g. `21-jdk`.
 - **Rust channels**: change `--default-toolchain stable` to `nightly` or a specific version.
 
+## GPU access (CUDA, and WebGPU/Vulkan)
+
+On a Linux host with an NVIDIA GPU, the launcher auto-detects it (`nvidia-smi`), switches the container runtime from `sysbox-runc` to plain `runc`, and forwards the GPU with `--gpus all`. This trades away sysbox isolation (no user-namespace remap) for GPU passthrough — see the `GPU DETECTED` banner at launch and [nestybox/sysbox#50](https://github.com/nestybox/sysbox/issues/50). CPU-only hosts and macOS are unaffected (no GPU passthrough).
+
+By default the container gets only the **`compute,utility`** driver capabilities — CUDA works, but the GL/Vulkan userspace is **not** mounted, so **WebGPU (Dawn), Vulkan, and OpenGL will not initialize** (no NVIDIA Vulkan ICD). That userspace (`libGLX_nvidia`, the Vulkan ICD JSON, `libnvidia-glvkspirv`) is supplied by the host driver mount, matched to the host driver version — `apt install libvulkan1` gives you the loader but not a working NVIDIA ICD.
+
+To enable WebGPU/Vulkan/GL, request the **`graphics`** capability:
+
+```bash
+CLAUDE_SANDBOX_GPU_GRAPHICS=1 ./run_claude_docker.sh          # per launch
+# or set it in envs/env.<INSTANCE>.sh for a WebGPU workspace
+```
+
+The launcher then passes `NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` and the NVIDIA Vulkan ICD appears inside the container. Power users can set `NVIDIA_DRIVER_CAPABILITIES` directly (e.g. `=all`) to override.
+
+**Security note:** `graphics` mounts more of the host driver and exposes the GPU driver's graphics/Vulkan code paths to the container — a wider (historically escape-prone) attack surface than compute-only. It's opt-in for that reason. It adds **no** new filesystem, network, or host-privilege access (still only `/workspace` + state mounts), and is scoped to `compute,utility,graphics` — not `display`/`video`. Reasonable for a single-user dev sandbox; leave it off on shared/multi-tenant GPU hosts or when running untrusted code. Note GPU mode already runs under `runc` rather than sysbox, so it's the less-isolated path regardless.
+
 ## Isolation scope
 
 This sandbox restricts **filesystem access only**. Network access from inside the container is unrestricted — the agent can reach the Claude API, npm, PyPI, crates.io, and the open internet. This is intentional: the goal is to keep the agent out of the host's home directory and system files, not to firewall its tool use. If you need network restrictions too, combine this with `--network none`, a custom Docker network, or the official Claude Code devcontainer's firewall (which is a separate, more restrictive setup).

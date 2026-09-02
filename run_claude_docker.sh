@@ -818,7 +818,20 @@ else
     echo "${YEL}========================================================================${RST}"
     echo
     RUNTIME_FLAG=()
-    GPU_FLAGS=(--gpus all)
+    # Driver capabilities. Default compute,utility (CUDA only) — the minimal
+    # GPU-driver surface. WebGPU/Vulkan/GL (e.g. Dawn) additionally need the
+    # `graphics` cap, which makes the NVIDIA runtime mount the host driver's
+    # GL/Vulkan userspace (ICD json, libGLX_nvidia, libnvidia-glvkspirv) — it
+    # can't come from apt, must match the host driver. That widens the
+    # GPU-driver attack surface, so it's OPT-IN:
+    #   CLAUDE_SANDBOX_GPU_GRAPHICS=1        -> compute,utility,graphics
+    #   NVIDIA_DRIVER_CAPABILITIES=<set>     -> use exactly that (power users)
+    gpu_caps="${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}"
+    if [[ "${CLAUDE_SANDBOX_GPU_GRAPHICS:-0}" == "1" && -z "${NVIDIA_DRIVER_CAPABILITIES:-}" ]]; then
+      gpu_caps="compute,utility,graphics"
+    fi
+    GPU_FLAGS=(--gpus all -e "NVIDIA_DRIVER_CAPABILITIES=${gpu_caps}")
+    echo "GPU caps: ${gpu_caps}$([[ "$gpu_caps" == *graphics* ]] && echo '  (Vulkan/WebGPU enabled)')"
   fi
 fi
 
