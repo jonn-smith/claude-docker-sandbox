@@ -865,11 +865,14 @@ CLAUDE_DEFAULT_ARGS=()
 # if the caller passed their own name/resume/continue flag (they win). First
 # launch (no matching session, or no projects dir yet) falls through to
 # --name with no error.
-if [[ "$USE_SHARED" == "1" ]]; then
-  SESSION_PROJECTS_DIR="${SHARED_HOME}/.claude/projects"
-else
-  SESSION_PROJECTS_DIR="${SANDBOX_HOME}/.claude/projects"
-fi
+# projects/ is bind-mounted PER-INSTANCE in BOTH layouts — even in shared
+# mode it's overlaid from ${SANDBOX_HOME}/.claude/projects (see the
+# -v "${SANDBOX_HOME}/.claude/projects:/home/claude/.claude/projects"
+# mount). So sessions always live under SANDBOX_HOME, never SHARED_HOME;
+# the resolver must search there or it looks in the wrong dir under
+# USE_SHARED=1 and never finds the instance's session (silently starting
+# fresh instead of resuming).
+SESSION_PROJECTS_DIR="${SANDBOX_HOME}/.claude/projects"
 case " $* " in
   *" --name "*|*" -n "*|*" --resume "*|*" --continue "*|*" -c "*|*" --session-id "*)
     : ;;   # caller controls session identity
