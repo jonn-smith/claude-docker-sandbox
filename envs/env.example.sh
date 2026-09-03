@@ -11,10 +11,18 @@
 #   source envs/env.<NAME>.sh && ./run_claude_docker.sh
 #
 # Each env gets its own persistent state at persistent-states/<INSTANCE>/.
+#
+# PATHS: comments below label each path [HOST] (a path on your machine, where
+# this script and the launcher run) or [CONTAINER] (a path inside the
+# sandbox). HOST dirs get bind-mounted to CONTAINER mount points — most
+# importantly [HOST] CLAUDE_SANDBOX_PROJECTS_DIR is mounted at [CONTAINER]
+# /workspace. When a value is consumed by something running INSIDE the
+# container (a hook, the agent), it must be a CONTAINER path.
 
-# Resolve repo root. This file lives in envs/, so repo root is the PARENT
-# of its own directory — hence the /.. below. All ${__ENV_SCRIPT_DIR}
-# defaults (context_reference, workspace) resolve against the repo root.
+# [HOST] Resolve repo root. This file lives in envs/, so repo root is the
+# PARENT of its own directory — hence the /.. below. All ${__ENV_SCRIPT_DIR}
+# defaults (context_reference, workspace) are HOST paths resolved against the
+# repo root, then bind-mounted into the container by the launcher.
 __ENV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Shared-state layout: settings, skills, plugins, hooks, memory, sessions
@@ -62,22 +70,25 @@ export FISS_MCP_ALLOW_WRITES=0
 #export CLAUDE_NOTIFY_FROM=claude-sandbox
 #export CLAUDE_NOTIFY_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 
-# Read-only context dir, bind-mounted to /context. Defaults to the
-# context_reference/ dir tracked in the repo.
+# Read-only context dir. The value is a [HOST] path; the launcher bind-mounts
+# it read-only to [CONTAINER] /context. Defaults to the context_reference/
+# dir tracked in the repo (host).
 export CLAUDE_SANDBOX_CONTEXT_DIR="${__ENV_SCRIPT_DIR}/context_reference"
 
 # Instance ID — must be unique across concurrent sandboxes (gates DinD
 # volume, container name, per-instance state dir).
 export CLAUDE_SANDBOX_INSTANCE=main
 
-# Project workspace, bind-mounted to /workspace inside the container. Must
-# be an absolute path. Defaults to a workspace/ dir next to this script,
-# auto-created on first use. Override to point at your real project tree.
+# Project workspace. The value is a [HOST] path (absolute); the launcher
+# bind-mounts it to [CONTAINER] /workspace. So any container-side "/workspace"
+# path (hooks, the audit log) refers to THIS host dir. Defaults to a
+# workspace/ dir next to this script (host), auto-created on first use.
+# Override to point at your real project tree.
 export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 
-# Optional: extra read-only bind mounts. Space-separated list of host
+# Optional: extra read-only bind mounts. Space-separated list of [HOST]
 # DIRECTORIES (no container path — the launcher picks one). Each shows
-# up at /read-only-reference/<basename> inside the container, with
+# up at [CONTAINER] /read-only-reference/<basename>, with
 # parent-dir prefixes joined by underscores on basename collision
 # (/a/b/data + /x/y/data → /read-only-reference/b_data and
 # /read-only-reference/y_data). Host path must exist; mounts are
@@ -99,7 +110,11 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 # journal). Set this to 1 to ALSO append a guaranteed, mechanical
 # "timestamp<TAB>prompt" line for every turn — a separate, exhaustive
 # capture distinct from the curated journal. Off by default. Path defaults
-# to /workspace/.journal-audit.log; override with CLAUDE_JOURNAL_AUDIT_FILE.
+# to /workspace/.journal-audit.log — a [CONTAINER] path (the hook writes it
+# INSIDE the container). /workspace is the mount of CLAUDE_SANDBOX_PROJECTS_DIR,
+# so this already lands in the project dir. If you override it, keep it a
+# /workspace/… [CONTAINER] path, NOT a host path — a host path won't exist
+# inside the container and the write will fail.
 #
 #export CLAUDE_JOURNAL_AUDIT=1
 #export CLAUDE_JOURNAL_AUDIT_FILE=/workspace/.journal-audit.log
