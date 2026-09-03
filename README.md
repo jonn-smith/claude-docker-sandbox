@@ -515,6 +515,8 @@ CLAUDE_SANDBOX_GPU_GRAPHICS=1 ./run_claude_docker.sh          # per launch
 
 The launcher then passes `NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` and the NVIDIA Vulkan ICD appears inside the container. Power users can set `NVIDIA_DRIVER_CAPABILITIES` directly (e.g. `=all`) to override.
 
+It also grants `--device /dev/nvidia-modeset` (and `/dev/dri/renderD128` when present). The `graphics` cap only mounts the Vulkan/GL *libraries*; `--gpus all`'s device cgroup still allows only the compute device set (`nvidia0`, `nvidiactl`, `uvm`), so the NVIDIA Vulkan driver's required `/dev/nvidia-modeset` node stays blocked — Vulkan init then fails with `EPERM` on that node even as root, because the eBPF device cgroup can't be loosened from inside the container. Adding the device at launch grants both the node and the cgroup rule. Existence-guarded, so it's a no-op on hosts without those nodes.
+
 **Security note:** `graphics` mounts more of the host driver and exposes the GPU driver's graphics/Vulkan code paths to the container — a wider (historically escape-prone) attack surface than compute-only. It's opt-in for that reason. It adds **no** new filesystem, network, or host-privilege access (still only `/workspace` + state mounts), and is scoped to `compute,utility,graphics` — not `display`/`video`. Reasonable for a single-user dev sandbox; leave it off on shared/multi-tenant GPU hosts or when running untrusted code. Note GPU mode already runs under `runc` rather than sysbox, so it's the less-isolated path regardless.
 
 ## Isolation scope

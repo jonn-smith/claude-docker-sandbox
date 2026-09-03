@@ -831,6 +831,20 @@ else
       gpu_caps="compute,utility,graphics"
     fi
     GPU_FLAGS=(--gpus all -e "NVIDIA_DRIVER_CAPABILITIES=${gpu_caps}")
+    # Requesting the `graphics` cap mounts the Vulkan/GL libs, but --gpus'
+    # device cgroup still only allows the compute device set (nvidia0,
+    # nvidiactl, uvm). The NVIDIA Vulkan driver additionally needs
+    # /dev/nvidia-modeset (major 195, minor 254); without it Vulkan init
+    # fails with EPERM on that node even as root, because the parent eBPF
+    # device cgroup can't be loosened from inside the container. --device
+    # both creates the node and adds the cgroup allow. /dev/dri/renderD128
+    # (DRM render node) is added too when present for GL/DRM paths. Both are
+    # existence-guarded so this is a no-op on hosts without them.
+    if [[ "$gpu_caps" == *graphics* ]]; then
+      for _gdev in /dev/nvidia-modeset /dev/dri/renderD128; do
+        [[ -e "$_gdev" ]] && GPU_FLAGS+=(--device "$_gdev")
+      done
+    fi
     echo "GPU caps: ${gpu_caps}$([[ "$gpu_caps" == *graphics* ]] && echo '  (Vulkan/WebGPU enabled)')"
   fi
 fi
