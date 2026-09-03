@@ -102,3 +102,6 @@ docker/hf-cache/
 # Persistent shared HuggingFace cache for headroom (downloaded at runtime,
 # not source). One copy shared by all instances.
 hf-cache-runtime/
+
+# Backups written by scripts/sync_env_template.py --go
+envs/*.bak
