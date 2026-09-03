@@ -1,6 +1,5 @@
 {
   "cleanupPeriodDays": 36500,
-  "model": "opus[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -54,6 +53,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/caveman-stats-refresh.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/journal-nudge.sh"
           }
         ]
       }
