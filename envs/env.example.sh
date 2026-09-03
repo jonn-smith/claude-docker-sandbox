@@ -130,6 +130,13 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 #
 #export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
+# Agent view. Claude Code renders a live agent-activity view (the sub-agent
+# / tool timeline pane). It's DISABLED BY DEFAULT in this sandbox — the
+# launcher forwards CLAUDE_CODE_DISABLE_AGENT_VIEW=1 unless you set it here.
+# Set to 0 to re-enable the agent view for this instance. Not a path; consumed
+# by claude INSIDE the container.
+#export CLAUDE_CODE_DISABLE_AGENT_VIEW=1
+
 # GPU graphics capability (WebGPU / Vulkan / GL). Only relevant on a GPU
 # host — the launcher forwards the GPU with --gpus all and, by default,
 # only the compute,utility driver caps (CUDA). WebGPU (Dawn) and any

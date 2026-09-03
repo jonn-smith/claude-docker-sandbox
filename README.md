@@ -162,6 +162,8 @@ The launcher script (`run_claude_docker.sh`) forwards any arguments to `claude` 
 - **Session identity — auto-resume, else auto-name.** On launch the script looks for the most-recent session whose name matches `$CLAUDE_SANDBOX_INSTANCE`. If one exists it **resumes it** (`--resume <id>`); if not (first launch), it **starts fresh named after the instance** (`--name`). So repeated launches of an instance drop you back into the same conversation, and a brand-new instance just starts clean — no error either way. This is skipped if you pass your own `--name`/`-n`/`--resume`/`--continue`/`--session-id` (you win). **Note:** don't pass `-n <instance>` yourself anymore — it *disables* the auto-resume (you'd get a fresh named session instead). Just let `CLAUDE_SANDBOX_INSTANCE` drive it.
 - **`--dangerously-skip-permissions`** — this is a disposable, filesystem-isolated sandbox built for unattended work, so permission prompts are skipped by default; you no longer type the flag every time. The agent runs tool calls inside the container **without prompting** — appropriate here because the container only sees the mounted workspace and its own state, never the host. To get prompts back, edit the `CLAUDE_DEFAULT_ARGS` block near the bottom of `run_claude_docker.sh`.
 
+The launcher also forwards **`CLAUDE_CODE_DISABLE_AGENT_VIEW=1`** by default (via `-e`), so the live agent-activity view is off in every session. Override per instance by setting `export CLAUDE_CODE_DISABLE_AGENT_VIEW=0` in that `envs/env.<INSTANCE>.sh`.
+
 To drop into a shell instead of `claude`, change the trailing `claude "$@"` in `docker/start_script.sh` to `/bin/bash`.
 
 ## Headroom proxy (token compression)
