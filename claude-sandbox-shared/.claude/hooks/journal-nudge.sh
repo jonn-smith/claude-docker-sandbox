@@ -23,37 +23,40 @@
 
 payload="$(cat 2>/dev/null)"
 
-event=""
-prompt=""
-transcript=""
-if command -v jq >/dev/null 2>&1; then
-  event="$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null)"
-  prompt="$(printf '%s' "$payload" | jq -r '.prompt // empty' 2>/dev/null)"
-  transcript="$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)"
-fi
+# Only the event name is needed to decide what to do; prompt/transcript are
+# extracted lazily below so the common no-op case (e.g. Stop with the audit
+# trail off) costs a single jq fork, not several.
+command -v jq >/dev/null 2>&1 || exit 0
+event="$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null)"
 
 # --- optional raw audit trail (opt-in) -------------------------------------
 # One flattened line per turn. USER line on prompt submit; CLAUDE line on
 # Stop (the response is only in the transcript by then, so read it back).
-if [[ "${CLAUDE_JOURNAL_AUDIT:-0}" == "1" ]] && command -v jq >/dev/null 2>&1; then
+if [[ "${CLAUDE_JOURNAL_AUDIT:-0}" == "1" ]]; then
   audit="${CLAUDE_JOURNAL_AUDIT_FILE:-/workspace/.journal-audit.log}"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)"
 
-  if [[ "$event" == "UserPromptSubmit" && -n "$prompt" ]]; then
-    line="$(printf '%s' "$prompt" | tr '\n\t' '  ')"
-    printf '%s\tUSER\t%s\n' "$ts" "$line" >> "$audit" 2>/dev/null || true
-  elif [[ "$event" == "Stop" && -f "$transcript" ]]; then
-    # All assistant text since the last user message = this turn's response.
-    # (assistant turns can span several records around tool calls.)
-    resp="$(jq -rs '
-      (map(.type) | rindex("user")) as $u
-      | (if $u == null then . else .[($u+1):] end)
-      | map(select(.type=="assistant")
-            | (.message.content // [])
-            | map(.text // empty) | join(""))
-      | map(select(. != "")) | join("\n")
-    ' "$transcript" 2>/dev/null | tr '\n\t' '  ')"
-    [[ -n "$resp" ]] && printf '%s\tCLAUDE\t%s\n' "$ts" "$resp" >> "$audit" 2>/dev/null || true
+  if [[ "$event" == "UserPromptSubmit" ]]; then
+    prompt="$(printf '%s' "$payload" | jq -r '.prompt // empty' 2>/dev/null)"
+    if [[ -n "$prompt" ]]; then
+      line="$(printf '%s' "$prompt" | tr '\n\t' '  ')"
+      printf '%s\tUSER\t%s\n' "$ts" "$line" >> "$audit" 2>/dev/null || true
+    fi
+  elif [[ "$event" == "Stop" ]]; then
+    transcript="$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)"
+    if [[ -f "$transcript" ]]; then
+      # All assistant text since the last user message = this turn's response.
+      # (assistant turns can span several records around tool calls.)
+      resp="$(jq -rs '
+        (map(.type) | rindex("user")) as $u
+        | (if $u == null then . else .[($u+1):] end)
+        | map(select(.type=="assistant")
+              | (.message.content // [])
+              | map(.text // empty) | join(""))
+        | map(select(. != "")) | join("\n")
+      ' "$transcript" 2>/dev/null | tr '\n\t' '  ')"
+      [[ -n "$resp" ]] && printf '%s\tCLAUDE\t%s\n' "$ts" "$resp" >> "$audit" 2>/dev/null || true
+    fi
   fi
 fi
 
