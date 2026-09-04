@@ -491,9 +491,22 @@ Leave `CLAUDE_NOTIFY_EMAIL` unset to disable entirely. Requires a working outbou
 
 ## Research journal reminder
 
-`CLAUDE.md` asks the agent to keep an append-only research journal at `/workspace/JOURNAL.md`. That's passive prose, so it drifts. A hook (`journal-nudge.sh`, wired on `SessionStart` + `UserPromptSubmit`) re-injects a terse reminder into context each turn — the same mechanism that keeps the caveman/ponytail modes active. It does **not** write entries itself: a shell hook only knows the timestamp and raw prompt, not the reasoning the journal wants, and per-prompt auto-append would violate the journal's own "meaningful steps only" rule. The agent still writes; the hook only raises salience.
+`CLAUDE.md` asks the agent to keep an append-only research journal at `/workspace/JOURNAL.md`. That's passive prose, so it drifts. A hook (`journal-nudge.sh`, wired on `SessionStart`, `UserPromptSubmit`, and `Stop`) re-injects a terse reminder into context each turn — the same mechanism that keeps the caveman/ponytail modes active. It does **not** write journal entries itself: a shell hook only knows the timestamp and raw text, not the reasoning the journal wants, and per-prompt auto-append would violate the journal's own "meaningful steps only" rule. The agent still writes; the hook only raises salience.
 
-**Optional raw audit log** (off by default): set `CLAUDE_JOURNAL_AUDIT=1` in your `envs/env.<INSTANCE>.sh` to also append a guaranteed `timestamp⇥prompt` line per turn — a mechanical capture distinct from the curated `JOURNAL.md`. Path defaults to `/workspace/.journal-audit.log`; override with `CLAUDE_JOURNAL_AUDIT_FILE`. Both are bind-mounted/host-side — no rebuild to change.
+**Optional raw audit log** (off by default): set `CLAUDE_JOURNAL_AUDIT=1` in your `envs/env.<INSTANCE>.sh` to also append a guaranteed `timestamp⇥ROLE⇥text` line per turn — a `USER` line (full, untruncated prompt) on submit and a `CLAUDE` line (full response, read from the transcript on `Stop`) — a mechanical capture of the whole conversation, distinct from the curated `JOURNAL.md`. Newlines are flattened so each turn is one grep-able line. Path defaults to `/workspace/.journal-audit.log` (a container path = the project dir); override with `CLAUDE_JOURNAL_AUDIT_FILE`. Both are bind-mounted/host-side — no rebuild to change.
+
+## Session & env management scripts
+
+Helpers under `scripts/` for finding, resuming, and reorganizing sessions and env files. Sessions are host-local files under `persistent-states/<INSTANCE>/.claude/projects/` (or `claude-sandbox-shared/…` in shared mode); these tools search every layout, including the pre-refactor `claude-sandbox-persistent-state-*` dirs.
+
+- **`scripts/list_sessions.sh [instance]`** — list every session across all state-dir layouts, most-recent-first; optional instance filter.
+- **`scripts/find_session.sh <name>`** — locate a session by name/content across all layouts and print its instance, uuid, and how to resume it. (`--resume` takes a uuid, not the display name — this maps name → uuid.)
+- **`scripts/resume_session.sh <name> [--latest]`** — resume a session by **name**: resolves name → instance + uuid, sources that instance's env, and launches `run_claude_docker.sh --resume`. Ambiguous names list matches and bail unless `--latest`.
+- **`scripts/migrate_env_layout.sh [--go]`** — one-shot migration of the old root-level layout (`env.<NAME>.sh`, `claude-sandbox-persistent-state-<INSTANCE>/`) to the current `envs/` + `persistent-states/` layout. Dry-run by default; merges on collision rather than stranding sessions.
+- **`scripts/split_env.sh <pool> [--go]`** — break a "pool" env that stacks many workspaces (multiple `CLAUDE_SANDBOX_PROJECTS_DIR` lines) into one `envs/env.<workspace>.sh` per workspace. Dry-run by default; never touches sessions.
+- **`scripts/sync_env_template.py [--go]`** — back-fill fields (and their comments) from `envs/env.example.sh` into every other `envs/env.*.sh` that's missing them, at the matching position. Existing values are never modified; writes `.bak` backups. Run it after adding a new field to the template.
+
+All are dry-run/read-only by default where they mutate anything (`--go` to apply); none push to any remote.
 
 ## Customization
 

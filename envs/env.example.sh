@@ -32,6 +32,14 @@ export CLAUDE_SANDBOX_USE_SHARED=1
 
 # Optional: turn the Headroom token-compression proxy on for this instance.
 export HEADROOM=1
+# Port Headroom listens on inside the container (default 8787). Override only
+# if 8787 collides with something in your workload.
+#export HEADROOM_PORT=8787
+
+# CodeGraph MCP (in-container code-graph server). On by default; the launcher
+# forwards CODEGRAPH (default 1) and start_script registers the MCP entry.
+# Set to 0 to skip CodeGraph for this instance.
+#export CODEGRAPH=0
 
 # fiss-mcp (Terra MCP server). FISS_MCP=1 (default) makes the launcher spawn
 # a host-side fiss-mcp server before docker run, then registers it in the
