@@ -25,6 +25,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/journal-nudge.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/gpu-watch.sh"
           }
         ]
       }
