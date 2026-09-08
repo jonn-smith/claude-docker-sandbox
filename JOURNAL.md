@@ -245,3 +245,34 @@ warning, exit 0.
 **Outcome.** GPU drop now surfaces at the next prompt in any GPU sandbox.
 Recovery path documented in README GPU section. New env contract:
 `CLAUDE_SANDBOX_GPU` / `CLAUDE_SANDBOX_GPU_COUNT` (launcher-set, not user config).
+
+## 2026-09-08T00:30:00Z  — GPU watchdog: also fire on Stop, with dedup'd email
+
+**Context.** User runs long prompts and wants GPU loss surfaced sooner — at
+turn end, not only at their next prompt.
+
+**Decision / action.** Wired `gpu-watch.sh` on `Stop` in addition to
+`UserPromptSubmit`. Made the hook event-aware: same nvidia-smi health check,
+but on `Stop` (where hook stdout is only visible in transcript mode) it also
+sends an email via the same `curl smtp://<default-gw>:25` path as
+`notify-if-long.sh`, gated on `CLAUDE_NOTIFY_EMAIL`. Deduped through a
+per-instance state file `~/.claude/cache/.gpu-watch-last` so it emails once on
+the healthy→lost transition, not every turn while the GPU stays down.
+
+**Why.** Claude Code surfaces hook stdout differently per event: injected as
+context on UserPromptSubmit, transcript-only on Stop. So a bare Stop echo would
+be easy to miss — the repo's other Stop hooks already notify out-of-band via
+email, so I reused that. State file lives in `~/.claude/cache` because that dir
+is bind-mounted PER-INSTANCE even in shared mode (unlike the rest of the shared
+`~/.claude`), so two GPU sandboxes don't clobber each other's last-known state.
+Event parsed with a grep (not a python/jq fork) and only in the lost path, so
+the healthy path stays one nvidia-smi call.
+
+**Evidence.** `bash -n` clean; settings.json validates and shows gpu-watch on
+both UserPromptSubmit and Stop. Exercised: off → silent; Stop + GPU-absent →
+prints warning, writes state=lost; second Stop → stays lost (email would be
+deduped).
+
+**Outcome.** GPU drop now caught at whichever comes first — next prompt or
+turn end — and emails you once when email is configured. Commit on branch
+feat/gpu-watch-hook.
