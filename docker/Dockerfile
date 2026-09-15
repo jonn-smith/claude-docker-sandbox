@@ -95,6 +95,16 @@ RUN python3 -m venv /opt/claude-venv && \
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH=/opt/claude-venv/bin:/usr/local/cargo/bin:/opt/java/openjdk/bin:$PATH
 
+# onnxruntime (pulled in by headroom for the kompress model) ships Microsoft's
+# 1DS/Aria telemetry SDK compiled in. On session creation it POSTs to
+# https://mobile.events.data.microsoft.com/OneCollector/1.0 (verified: the
+# proxy resolves that host and connects to it), and it drops a session file
+# named ':memory:.ses' into the process CWD — the offline-store path falls
+# back to the literal string ":memory:" because the device-ID store can't
+# initialize here. ORT_DISABLE_TELEMETRY=1 stops both. Set as an image ENV so
+# `docker exec` shells inherit it too, not just the start_script process tree.
+ENV ORT_DISABLE_TELEMETRY=1
+
 ################################################################################
 
 # Files baked into the claude home dir. Container starts as root so the uid

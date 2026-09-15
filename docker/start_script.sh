@@ -19,6 +19,13 @@ if [[ -n "${ANTHROPIC_TARGET_API_URL:-}" ]]; then
   echo "vertex routing: ON  upstream=${ANTHROPIC_TARGET_API_URL}"
 fi
 
+# Kill onnxruntime's built-in Microsoft telemetry. ORT is pulled in by
+# headroom for the kompress model; its 1DS/Aria SDK uploads session/model
+# events to mobile.events.data.microsoft.com and litters the workdir with a
+# ':memory:.ses' session file. Also set as an ENV in docker/Dockerfile, but
+# exported here too so a running image picks it up without a rebuild.
+export ORT_DISABLE_TELEMETRY=1
+
 # Headroom proxy (opt-in, set HEADROOM=1 at launch).
 # When on, intercepts Claude Code traffic on localhost:$HEADROOM_PORT and
 # compresses prompts/tool outputs before forwarding upstream — either to
