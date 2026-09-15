@@ -276,3 +276,23 @@ deduped).
 **Outcome.** GPU drop now caught at whichever comes first — next prompt or
 turn end — and emails you once when email is configured. Commit on branch
 feat/gpu-watch-hook.
+
+## 2026-09-15T00:00:00Z  — Add gh to image; bump Claude Code 2.1.200 -> 2.1.272
+
+**Context.** Requested: GitHub CLI in the sandbox image, and Claude Code updated
+to latest.
+
+**Decision / action.** `docker/Dockerfile`: added `gh` (ENV GH_VERSION=2.100.0)
+installed from the official release `.deb`, arch-detected via
+`dpkg --print-architecture`, `dpkg -i` (no apt lists needed — only dep is
+libc6). Bumped `CLAUDE_CODE_VERSION` 2.1.200 -> 2.1.272. README dev-tooling
+line updated.
+
+**Why.** Chose the pinned `.deb` over adding GitHub's apt repo+key: matches the
+Dockerfile's pin-everything/reproducible stance (like claude-code, codegraph),
+avoids a third apt-get update + keyring plumbing, and keeps the version
+explicit. `.deb` URL verified HTTP 200 for v2.100.0 amd64 before pinning; latest
+claude-code confirmed via `npm view`.
+
+**Outcome.** `make rebuild` needed to bake these in (image change, not host-side).
+Commit on branch jts_cc_update.

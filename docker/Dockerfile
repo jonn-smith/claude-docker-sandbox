@@ -14,6 +14,18 @@ RUN apt-get update && \
 # For email notifications, docker-in-a-docker and other utils:
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils shellcheck docker.io procps
 
+# GitHub CLI (gh). Pinned + installed from the official release .deb so builds
+# stay reproducible — same reason claude-code / codegraph are pinned rather
+# than tracking a channel. dpkg -i needs no apt lists (only dep is libc6,
+# already present). Bump GH_VERSION + `make rebuild` for a newer release.
+ENV GH_VERSION=2.100.0
+RUN arch="$(dpkg --print-architecture)" \
+    && curl -fsSL -o /tmp/gh.deb \
+       "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.deb" \
+    && dpkg -i /tmp/gh.deb \
+    && rm -f /tmp/gh.deb \
+    && gh --version
+
 # Clean up APT stuff:
 RUN rm -rf /var/lib/apt/lists/*
 
@@ -30,7 +42,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 # write-semantics change between unpinned builds is exactly the kind of
 # thing that produced the bind-mounted-credentials persistence bug
 # (see commit ee421d5).
-ENV CLAUDE_CODE_VERSION=2.1.200
+ENV CLAUDE_CODE_VERSION=2.1.272
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && claude --version
 
