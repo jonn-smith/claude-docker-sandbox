@@ -770,6 +770,7 @@ fi
 RUNTIME_FLAG=(--runtime=sysbox-runc)
 GPU_FLAGS=()
 HAVE_GPU=0
+GPU_COUNT=0
 
 # Optional --shm-size override. Docker defaults /dev/shm to 64MB, which is
 # too small for Chromium/Playwright, PyTorch DataLoader workers, and other
@@ -831,6 +832,10 @@ else
       gpu_caps="compute,utility,graphics"
     fi
     GPU_FLAGS=(--gpus all -e "NVIDIA_DRIVER_CAPABILITIES=${gpu_caps}")
+    # Count GPUs visible at launch. Forwarded to the container so the
+    # gpu-watch.sh hook can detect the "GPU dropped out of the cgroup"
+    # bug (nvidia-smi starts failing, or fewer GPUs than we started with).
+    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU ')
     # Requesting the `graphics` cap mounts the Vulkan/GL libs, but --gpus'
     # device cgroup still only allows the compute device set (nvidia0,
     # nvidiactl, uvm). The NVIDIA Vulkan driver additionally needs
@@ -984,6 +989,8 @@ docker run --rm -it \
   -e ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
   -e CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" \
   -e CLAUDE_CODE_DISABLE_AGENT_VIEW="${CLAUDE_CODE_DISABLE_AGENT_VIEW:-1}" \
+  -e CLAUDE_SANDBOX_GPU="${HAVE_GPU}" \
+  -e CLAUDE_SANDBOX_GPU_COUNT="${GPU_COUNT:-0}" \
   -e ANTHROPIC_TARGET_API_URL="${VERTEX_PROXY_URL_FOR_CONTAINER}" \
   -w /workspace \
   claude-sandbox:${DOCKER_IMAGE_VERSION} /home/claude/start_script.sh \
