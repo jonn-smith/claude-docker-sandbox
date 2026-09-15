@@ -5,14 +5,16 @@ FROM node:22-slim
 ################################################################################
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       git ca-certificates curl ripgrep vim sudo gosu jq wget \
       openssh-client \
       python3 python3-pip python3-venv \
-      build-essential
+      build-essential \
+      # For email notifications, docker-in-a-docker and other utils
+      postfix mailutils shellcheck docker.io procps && \
+      # Clean up APT settings
+      rm -rf /var/lib/apt/lists/* 
 
-# For email notifications, docker-in-a-docker and other utils:
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y postfix mailutils shellcheck docker.io procps
 
 # GitHub CLI (gh). Pinned + installed from the official release .deb so builds
 # stay reproducible — same reason claude-code / codegraph are pinned rather
@@ -26,15 +28,13 @@ RUN arch="$(dpkg --print-architecture)" \
     && rm -f /tmp/gh.deb \
     && gh --version
 
-# Clean up APT stuff:
-RUN rm -rf /var/lib/apt/lists/*
-
 COPY --from=temurin /opt/java/openjdk /opt/java/openjdk
 
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-      sh -s -- -y --no-modify-path --default-toolchain stable
+      sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable && \
+      chmod -R a+rwX /usr/local/cargo /usr/local/rustup
 
 # Install claude code. Pinned — bumping CLAUDE_CODE_VERSION + `make
 # rebuild` lands a newer release deterministically. Tracking "latest"
@@ -75,8 +75,7 @@ RUN userdel -r node 2>/dev/null || true && \
     groupadd -g 1015 claude && \
     useradd -m -u 1015 -g 1015 -s /bin/bash claude && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
-    chmod 440 /etc/sudoers.d/claude && \
-    chown -R claude:claude /usr/local/cargo /usr/local/rustup
+    chmod 440 /etc/sudoers.d/claude 
 
 RUN python3 -m venv /opt/claude-venv && \
     /opt/claude-venv/bin/pip install --no-cache-dir --upgrade pip && \
@@ -84,7 +83,7 @@ RUN python3 -m venv /opt/claude-venv && \
       numpy pandas matplotlib scipy scikit-learn seaborn \
       ipython jupyter requests \
       "headroom-ai[proxy]==0.37.0" && \
-    chown -R claude:claude /opt/claude-venv
+    chmod -R a+rwX /opt/claude-venv
 
 # fiss-mcp lives on the HOST, not in the container. The launcher
 # (run_claude_docker.sh) spawns it before docker run, passes the URL in via
@@ -92,14 +91,6 @@ RUN python3 -m venv /opt/claude-venv && \
 # This keeps gcloud, gsutil, google-cloud-* libs, and ~/.config/gcloud out
 # of the container entirely, so the only reachable path from inside the
 # sandbox to Terra/GCP is the MCP tools — read-only by default.
-
-# Make the bulk dirs writable by any UID. The runtime entrypoint remaps the
-# claude user to match the host invoker, but chown -R on hundreds of MB of
-# wheels and toolchain files takes 10+ seconds on every container start. With
-# world-writable perms baked at build time, the entrypoint can skip the chown
-# entirely. Container is single-user (claude) so loosening perms here doesn't
-# expand attack surface.
-RUN chmod -R a+rwX /opt/claude-venv /usr/local/cargo /usr/local/rustup
 
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH=/opt/claude-venv/bin:/usr/local/cargo/bin:/opt/java/openjdk/bin:$PATH
