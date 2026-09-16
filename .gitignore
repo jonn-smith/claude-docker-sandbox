@@ -105,3 +105,7 @@ hf-cache-runtime/
 
 # Backups written by scripts/sync_env_template.py --go
 envs/*.bak
+
+# Research journal is local audit state, not source. Stays on disk, out of git.
+JOURNAL.md
+JOURNAL/

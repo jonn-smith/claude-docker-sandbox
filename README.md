@@ -83,7 +83,7 @@ Base: `node:22-slim`.
 - **Rust** — stable toolchain (`rustc`, `cargo`, `rustup`) at `/usr/local/{cargo,rustup}`.
 - **Java 17** — Eclipse Temurin JDK at `/opt/java/openjdk`, `JAVA_HOME` exported.
 - **CodeGraph** — `codegraph` binary (self-contained bundle, vendored Node runtime) at `/usr/local/bin/codegraph` → `/opt/codegraph/current/bin/codegraph`. Version pinned via `CODEGRAPH_VERSION` in `docker/Dockerfile`; bump + `make rebuild` to refresh.
-- **Dev tooling** — `git`, `curl`, `ripgrep`, `vim`, `build-essential`.
+- **Dev tooling** — `git`, `curl`, `ripgrep`, `vim`, `build-essential`, `gh` (GitHub CLI, pinned via `GH_VERSION` in `docker/Dockerfile`).
 - **Passwordless `sudo`** for the container's `claude` user. UID/GID are remapped at container start to match the host invoker (`HOST_UID` / `HOST_GID` env vars supplied by `run_claude_docker.sh`), so a single image is shareable across hosts with different user IDs — no rebuild needed.
 
 Approximate image size: ~3 GB.
