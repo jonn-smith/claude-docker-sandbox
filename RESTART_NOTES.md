@@ -58,3 +58,9 @@ A plain container restart on the current image fixes Fable and nothing else.
 `runy.sh <name> <project-md>` (full-stack A/B on one variable), plus `run.sh`
 / `run2.sh` / `run3.sh` / `runx.sh` for narrower bisects. Scratch is
 session-scoped and will not survive the restart — copy it out if you want it.
+
+## Update 2026-09-16 18:20 UTC — first rebuild was partial
+
+Image built at 14:36 UTC: has iproute2 (commit 14:27), lacks the headroom flag
+(commit 15:45). Fable verified working; `ip route` verified. Rebuild once more
+from the current tree, then re-run checklist steps 2 and 4.
