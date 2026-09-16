@@ -10,8 +10,11 @@ RUN apt-get update && \
       openssh-client \
       python3 python3-pip python3-venv \
       build-essential \
-      # For email notifications, docker-in-a-docker and other utils
-      postfix mailutils shellcheck docker.io procps && \
+      # For email notifications, docker-in-a-docker and other utils.
+      # iproute2 is explicit: the notify/gpu-watch hooks resolve the host IP
+      # with `ip route`, and it only arrived here as a docker.io *recommends*
+      # until this list moved under --no-install-recommends.
+      postfix mailutils shellcheck docker.io procps iproute2 && \
       # Clean up APT settings
       rm -rf /var/lib/apt/lists/* 
 
