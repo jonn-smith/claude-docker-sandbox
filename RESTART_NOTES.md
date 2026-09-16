@@ -64,3 +64,9 @@ session-scoped and will not survive the restart — copy it out if you want it.
 Image built at 14:36 UTC: has iproute2 (commit 14:27), lacks the headroom flag
 (commit 15:45). Fable verified working; `ip route` verified. Rebuild once more
 from the current tree, then re-run checklist steps 2 and 4.
+
+## Update 2026-09-16 20:45 UTC — closed
+
+Second rebuild (layers 20:28 UTC) has the headroom flag. Checklist 1–4 all
+pass, including the corruption probe: 300/300 lines intact, and headroom's log
+routes the Bash result as `excluded_tool`. Nothing left open from this branch.
