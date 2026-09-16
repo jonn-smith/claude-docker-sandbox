@@ -166,10 +166,11 @@ small commits, link the range, not each one.
 
 ## Honest record
 
-Write down what did not work and why, not only what did. Note the
-approaches abandoned, the tests that failed unexpectedly, and the
-evidence that changed the plan. A clean narrative that hides the dead
-ends is less useful, not more.
+Write down what did not work and why, not only what did. Include the
+wrong guesses, the approaches abandoned, the moments where the evidence
+flipped your direction. Those are the load-bearing parts of a research
+write-up — a clean narrative that hides the dead ends is less useful,
+not more.
 
 If you change your mind about a previous entry, add a new entry that
 references the old one ("see 2026-06-03T14:22Z — that hypothesis was
