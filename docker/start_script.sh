@@ -39,7 +39,16 @@ if [[ "${HEADROOM:-0}" == "1" ]]; then
     exit 1
   fi
   echo "headroom: starting on :${HEADROOM_PORT}"
-  headroom proxy --no-telemetry --port "${HEADROOM_PORT}" >/tmp/headroom.log 2>&1 &
+  # --protect-tool-results Bash is NOT optional here. headroom ships Read/Grep/
+  # Glob/Edit/Write in DEFAULT_EXCLUDE_TOOLS ("exact file contents the agent
+  # needs for edits") but deliberately leaves Bash compressible, on the
+  # assumption Bash output is build/test logs. This sandbox tells the agent the
+  # opposite — bypass-permissions mode instructs it to read files with cat/sed
+  # and search with grep *through Bash* — so unprotected Bash means lossy file
+  # reads. Measured on a 300-line probe: 3308 words -> 2492, every article
+  # dropped and ~3 lines per 32 emptied of content entirely.
+  headroom proxy --no-telemetry --port "${HEADROOM_PORT}" \
+    --protect-tool-results Bash >/tmp/headroom.log 2>&1 &
   HR_PID=$!
   trap 'kill "${HR_PID}" 2>/dev/null || true' EXIT
 
