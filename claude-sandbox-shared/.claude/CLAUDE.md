@@ -164,13 +164,14 @@ Use UTC timestamps so entries sort correctly across hosts. Reference
 git SHAs of any commits you make in this step. If a step spans many
 small commits, link the range, not each one.
 
-## Reasoning fidelity
+## Record of choices
 
-The journal should show the actual reasoning, not a sanitized post-hoc
-summary. Include the wrong guesses, the rejected designs, the moments
-where the evidence flipped your direction. Those are the load-bearing
-parts of a research write-up. A clean narrative that hides the dead
-ends is less useful, not more.
+We want to be able to publish results from what was done here. Write
+down what did not work and why, not only what did. Include the
+wrong guesses, the approaches abandoned, the moments where the evidence
+flipped your direction.  A user-appropriate accounting is fine.  I
+do not want to know your internal thoughts - I just need to understand
+why certain choices are made and what was tested to inform them.
 
 If you change your mind about a previous entry, add a new entry that
 references the old one ("see 2026-06-03T14:22Z — that hypothesis was
