@@ -25,6 +25,8 @@
 # repo root, then bind-mounted into the container by the launcher.
 __ENV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+################################################################################
+
 # Shared-state layout: settings, skills, plugins, hooks, memory, sessions
 # come from claude-sandbox-shared/. Set to 0 for fully isolated per-instance
 # state.
@@ -69,30 +71,34 @@ export FISS_MCP=1
 export FISS_MCP_ALLOW_WRITES=0
 #export FISS_MCP_PORT=39042
 
+################################################################################
+
+# Instance ID — must be unique across concurrent sandboxes (gates DinD
+# volume, container name, per-instance state dir).
+export CLAUDE_SANDBOX_INSTANCE=main
+
 # Email notifications when a Claude task takes longer than the threshold in
 # claude-sandbox-shared/.claude/hooks/notify-if-long.sh. Leave
 # CLAUDE_NOTIFY_EMAIL unset/empty to disable. CLAUDE_NOTIFY_FROM and
 # CLAUDE_NOTIFY_HOSTNAME shape the From/Message-ID headers; they default to
 # "claude-sandbox" and the host's $(hostname -f) if not set.
 #export CLAUDE_NOTIFY_EMAIL=you@example.com
-#export CLAUDE_NOTIFY_FROM=claude-sandbox
+#export CLAUDE_NOTIFY_FROM=CSB_${HOSTNAME}_${CLAUDE_SANDBOX_INSTANCE}
 #export CLAUDE_NOTIFY_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
-
-# Read-only context dir. The value is a [HOST] path; the launcher bind-mounts
-# it read-only to [CONTAINER] /context. Defaults to the context_reference/
-# dir tracked in the repo (host).
-export CLAUDE_SANDBOX_CONTEXT_DIR="${__ENV_SCRIPT_DIR}/context_reference"
-
-# Instance ID — must be unique across concurrent sandboxes (gates DinD
-# volume, container name, per-instance state dir).
-export CLAUDE_SANDBOX_INSTANCE=main
 
 # Project workspace. The value is a [HOST] path (absolute); the launcher
 # bind-mounts it to [CONTAINER] /workspace. So any container-side "/workspace"
 # path (hooks, the audit log) refers to THIS host dir. Defaults to a
 # workspace/ dir next to this script (host), auto-created on first use.
 # Override to point at your real project tree.
-export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
+export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace/${CLAUDE_SANDBOX_INSTANCE}"
+
+################################################################################
+
+# Read-only context dir. The value is a [HOST] path; the launcher bind-mounts
+# it read-only to [CONTAINER] /context. Defaults to the context_reference/
+# dir tracked in the repo (host).
+export CLAUDE_SANDBOX_CONTEXT_DIR="${__ENV_SCRIPT_DIR}/context_reference"
 
 # Optional: extra read-only bind mounts. Space-separated list of [HOST]
 # DIRECTORIES (no container path — the launcher picks one). Each shows
@@ -128,6 +134,8 @@ export CLAUDE_SANDBOX_PROJECTS_DIR="${__ENV_SCRIPT_DIR}/workspace"
 #
 #export CLAUDE_JOURNAL_AUDIT=1
 #export CLAUDE_JOURNAL_AUDIT_FILE=/workspace/.journal-audit.log
+
+################################################################################
 
 # Optional HuggingFace token. Only used for the one-time headroom model
 # prefetch (HEADROOM=1). Unauthenticated HF downloads get rate-limited and
